@@ -21,7 +21,7 @@ for the full design rationale.
 |---|---|---|
 | 1 | Architecture & SRE Design | ✅ done |
 | 2 | Application Foundation | ✅ done |
-| 3 | Docker Compose Environment | ⬜ not started |
+| 3 | Docker Compose Environment | ✅ done |
 | 4 | Metrics Instrumentation | ⬜ not started |
 | 5 | Prometheus & Grafana | ⬜ not started |
 | 6 | Structured Logging & Loki | ⬜ not started |
@@ -70,8 +70,48 @@ pulseops/
 
 ## Quick Start
 
-Each service under `services/` runs standalone (`npm install && npm start`,
-copy `.env.example` to `.env` first), but a full end-to-end run needs
-Postgres, Redis, and RabbitMQ — that wiring lands in Phase 3 (Docker
-Compose). Until then, a service will start and report an unhealthy `/health`
-if its dependency isn't reachable, rather than crashing.
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+This starts Postgres, Redis, RabbitMQ, and all four services. The gateway
+listens on **http://localhost:7000** (not 8080 — see note below).
+
+```bash
+# create a user
+curl -X POST http://localhost:7000/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Nandu","email":"nandu@example.com"}'
+
+# create an order for that user
+curl -X POST http://localhost:7000/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"userId":1,"item":"widget","quantity":3}'
+
+# check it - status should flip from "pending" to "completed"
+# within a second or two once the worker consumes it off RabbitMQ
+curl http://localhost:7000/api/orders/1
+```
+
+Other useful endpoints while it's running:
+- RabbitMQ management UI: http://localhost:15672 (guest/guest) — watch the
+  `order.created` queue depth live.
+- `docker compose logs -f worker` — watch orders get consumed.
+- `docker compose down -v` — stop everything and wipe the Postgres volume.
+
+**Why port 7000 and not 8080:** on this dev machine, Hyper-V/WSL reserves
+large chunks of the 7975-9191 range as dynamic port exclusions, so Docker
+can't bind 8080, 8081, or 9090 to the host. The container itself still
+listens on 8080 internally — only the host-side mapping changed
+(`"7000:8080"` in `docker-compose.yml`). If your machine doesn't have this
+issue, feel free to remap it back to 8080.
+
+**A real reliability bug found and fixed during this phase:** RabbitMQ's
+Docker healthcheck (`rabbitmq-diagnostics ping`) reports "healthy" before the
+AMQP listener on port 5672 is actually ready to accept connections — a real
+race observed while testing, not a hypothetical one. The worker's first
+connection attempt on a fresh `docker compose up` hit `ECONNREFUSED`. Fixed
+with bounded exponential backoff on startup (`services/worker/src/index.js`)
+instead of crashing on the first failure — see the worker logs on a fresh
+`docker compose up -d --build` for it retrying in real time.

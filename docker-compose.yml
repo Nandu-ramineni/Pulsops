@@ -1,0 +1,110 @@
+name: pulseops
+
+x-database-url: &database-url postgres://${POSTGRES_USER:-pulseops}:${POSTGRES_PASSWORD:-pulseops}@postgres:5432/${POSTGRES_DB:-pulseops}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pulseops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pulseops}
+      POSTGRES_DB: ${POSTGRES_DB:-pulseops}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulseops}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # management UI (guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  user-service:
+    build: ./services/user-service
+    restart: unless-stopped
+    environment:
+      PORT: 4001
+      DATABASE_URL: *database-url
+    ports:
+      - "4001:4001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  order-service:
+    build: ./services/order-service
+    restart: unless-stopped
+    environment:
+      PORT: 4002
+      DATABASE_URL: *database-url
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://rabbitmq:5672
+      USER_SERVICE_URL: http://user-service:4001
+      USER_CACHE_TTL_SECONDS: 60
+    ports:
+      - "4002:4002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+
+  worker:
+    build: ./services/worker
+    restart: unless-stopped
+    environment:
+      HEALTH_PORT: 4003
+      DATABASE_URL: *database-url
+      RABBITMQ_URL: amqp://rabbitmq:5672
+      PREFETCH: 5
+    ports:
+      - "4003:4003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  gateway:
+    build: ./services/gateway
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      USER_SERVICE_URL: http://user-service:4001
+      ORDER_SERVICE_URL: http://order-service:4002
+    ports:
+      - "7000:8080"
+    depends_on:
+      user-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+
+volumes:
+  postgres-data:
