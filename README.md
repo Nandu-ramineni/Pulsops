@@ -20,7 +20,7 @@ for the full design rationale.
 | Phase | Area | Status |
 |---|---|---|
 | 1 | Architecture & SRE Design | ✅ done |
-| 2 | Application Foundation | ⬜ not started |
+| 2 | Application Foundation | ✅ done |
 | 3 | Docker Compose Environment | ⬜ not started |
 | 4 | Metrics Instrumentation | ⬜ not started |
 | 5 | Prometheus & Grafana | ⬜ not started |
@@ -70,4 +70,8 @@ pulseops/
 
 ## Quick Start
 
-Not yet available — application and Compose environment land in Phases 2-3.
+Each service under `services/` runs standalone (`npm install && npm start`,
+copy `.env.example` to `.env` first), but a full end-to-end run needs
+Postgres, Redis, and RabbitMQ — that wiring lands in Phase 3 (Docker
+Compose). Until then, a service will start and report an unhealthy `/health`
+if its dependency isn't reachable, rather than crashing.
