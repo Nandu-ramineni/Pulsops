@@ -17,10 +17,27 @@ async function updateOrderStatus(orderId, status) {
   await pool.query('UPDATE orders SET status = $1, updated_at = now() WHERE id = $2', [status, orderId]);
 }
 
+// RabbitMQ's healthcheck can report "healthy" a moment before it actually
+// accepts AMQP connections, so a single connect attempt at container startup
+// is a real, observed race (not hypothetical) - retry with backoff instead
+// of crashing on the first ECONNREFUSED.
+async function connectWithRetry(url, { attempts = 10, baseDelayMs = 1000, maxDelayMs = 10000 } = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await amqplib.connect(url);
+    } catch (err) {
+      if (attempt === attempts) throw err;
+      const delay = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
+      console.error(`rabbitmq connect attempt ${attempt}/${attempts} failed (${err.message}), retrying in ${delay}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
 async function main() {
   startHealthServer(process.env.HEALTH_PORT || 4003);
 
-  const connection = await amqplib.connect(process.env.RABBITMQ_URL);
+  const connection = await connectWithRetry(process.env.RABBITMQ_URL);
   const channel = await connection.createChannel();
   await channel.assertQueue(QUEUE_NAME, { durable: true });
   channel.prefetch(PREFETCH);
