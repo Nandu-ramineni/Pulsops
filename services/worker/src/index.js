@@ -1,7 +1,7 @@
-require('dotenv').config();
-const amqplib = require('amqplib');
-const { pool } = require('./db');
-const { startHealthServer, setReady } = require('./health');
+import 'dotenv/config';
+import amqplib from 'amqplib';
+import { pool } from './db.js';
+import { startHealthServer, setReady } from './health.js';
 
 const QUEUE_NAME = 'order.created';
 const PREFETCH = Number(process.env.PREFETCH || 5);

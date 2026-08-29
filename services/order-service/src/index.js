@@ -1,8 +1,8 @@
-require('dotenv').config();
-const express = require('express');
-const { pool } = require('./db');
-const { connectRedis } = require('./redisClient');
-const ordersRouter = require('./routes/orders');
+import 'dotenv/config';
+import express from 'express';
+import { pool } from './db.js';
+import { connectRedis } from './redisClient.js';
+import ordersRouter from './routes/orders.js';
 
 const app = express();
 const PORT = process.env.PORT || 4002;

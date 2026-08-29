@@ -1,10 +1,10 @@
-const { connectRedis } = require('./redisClient');
+import { connectRedis } from './redisClient.js';
 
 const TTL = Number(process.env.USER_CACHE_TTL_SECONDS || 60);
 
 // Cache-aside: check Redis first, fall back to a live call to user-service on miss.
 // This is the "OS -> Redis -> (miss) -> user-service" hop shown in the architecture diagram.
-async function getUser(userId) {
+export async function getUser(userId) {
   const redis = await connectRedis();
   const cacheKey = `user:${userId}`;
 
@@ -22,5 +22,3 @@ async function getUser(userId) {
   await redis.set(cacheKey, JSON.stringify(user), { EX: TTL });
   return { user, source: 'origin' };
 }
-
-module.exports = { getUser };

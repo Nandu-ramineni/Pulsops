@@ -1,7 +1,7 @@
-const express = require('express');
-const { pool } = require('../db');
-const { getUser } = require('../userClient');
-const { publishOrderCreated } = require('../queue');
+import express from 'express';
+import { pool } from '../db.js';
+import { getUser } from '../userClient.js';
+import { publishOrderCreated } from '../queue.js';
 
 const router = express.Router();
 
@@ -48,4 +48,4 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-module.exports = router;
+export default router;

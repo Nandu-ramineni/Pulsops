@@ -1,7 +1,7 @@
-require('dotenv').config();
-const express = require('express');
-const { pool } = require('./db');
-const usersRouter = require('./routes/users');
+import 'dotenv/config';
+import express from 'express';
+import { pool } from './db.js';
+import usersRouter from './routes/users.js';
 
 const app = express();
 const PORT = process.env.PORT || 4001;

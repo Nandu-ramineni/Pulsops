@@ -1,12 +1,12 @@
-const http = require('http');
+import http from 'http';
 
 let ready = false;
 
-function setReady(value) {
+export function setReady(value) {
   ready = value;
 }
 
-function startHealthServer(port) {
+export function startHealthServer(port) {
   const server = http.createServer((req, res) => {
     if (req.url === '/health') {
       res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
@@ -19,5 +19,3 @@ function startHealthServer(port) {
   server.listen(port, () => console.log(`worker health server listening on ${port}`));
   return server;
 }
-
-module.exports = { startHealthServer, setReady };
