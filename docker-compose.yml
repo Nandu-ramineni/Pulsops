@@ -35,6 +35,9 @@ services:
     ports:
       - "5672:5672"   # AMQP
       - "15672:15672" # management UI (guest/guest)
+      - "15692:15692" # Prometheus metrics (broker-native queue depth etc.)
+    volumes:
+      - ./observability/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s

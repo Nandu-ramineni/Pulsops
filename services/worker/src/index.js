@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import amqplib from 'amqplib';
-import { pool } from './db.js';
+import { query } from './db.js';
 import { startHealthServer, setReady } from './health.js';
+import { queueMessagesConsumedTotal, queueMessageProcessingDuration, workerActiveJobs } from './metrics.js';
 
 const QUEUE_NAME = 'order.created';
 const PREFETCH = Number(process.env.PREFETCH || 5);
@@ -14,7 +15,7 @@ function simulateProcessing() {
 }
 
 async function updateOrderStatus(orderId, status) {
-  await pool.query('UPDATE orders SET status = $1, updated_at = now() WHERE id = $2', [status, orderId]);
+  await query('UPDATE orders SET status = $1, updated_at = now() WHERE id = $2', [status, orderId], 'update_order_status');
 }
 
 // RabbitMQ's healthcheck can report "healthy" a moment before it actually
@@ -48,15 +49,22 @@ async function main() {
   channel.consume(QUEUE_NAME, async (msg) => {
     if (!msg) return;
     let order;
+    workerActiveJobs.inc();
+    const endTimer = queueMessageProcessingDuration.startTimer({ queue: QUEUE_NAME });
     try {
       order = JSON.parse(msg.content.toString());
       await simulateProcessing();
       await updateOrderStatus(order.id, 'completed');
+      queueMessagesConsumedTotal.inc({ queue: QUEUE_NAME, status: 'completed' });
       console.log(`order ${order.id} completed`);
       channel.ack(msg);
     } catch (err) {
+      queueMessagesConsumedTotal.inc({ queue: QUEUE_NAME, status: 'failed' });
       console.error(`failed to process order ${order && order.id}`, err.message);
       channel.nack(msg, false, false);
+    } finally {
+      endTimer();
+      workerActiveJobs.dec();
     }
   });
 

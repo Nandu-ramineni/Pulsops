@@ -22,7 +22,7 @@ for the full design rationale.
 | 1 | Architecture & SRE Design | ✅ done |
 | 2 | Application Foundation | ✅ done |
 | 3 | Docker Compose Environment | ✅ done |
-| 4 | Metrics Instrumentation | ⬜ not started |
+| 4 | Metrics Instrumentation | ✅ done |
 | 5 | Prometheus & Grafana | ⬜ not started |
 | 6 | Structured Logging & Loki | ⬜ not started |
 | 7 | OpenTelemetry & Tempo | ⬜ not started |
@@ -97,6 +97,12 @@ curl http://localhost:7000/api/orders/1
 Other useful endpoints while it's running:
 - RabbitMQ management UI: http://localhost:15672 (guest/guest) — watch the
   `order.created` queue depth live.
+- Prometheus-format `/metrics` on every service: gateway `:7000`,
+  user-service `:4001`, order-service `:4002`, worker `:4003`, plus
+  RabbitMQ's own broker metrics on `:15692`. Nothing scrapes these yet —
+  that's Phase 5. See [docs/observability.md](docs/observability.md) for
+  what's measured and why (the RED method, and why each service also
+  tracks its own dependencies beyond RED).
 - `docker compose logs -f worker` — watch orders get consumed.
 - `docker compose down -v` — stop everything and wipe the Postgres volume.
 

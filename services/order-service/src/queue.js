@@ -1,4 +1,5 @@
 import amqplib from 'amqplib';
+import { queueMessagesPublishedTotal } from './metrics.js';
 
 export const QUEUE_NAME = 'order.created';
 let channel;
@@ -12,6 +13,12 @@ export async function connectQueue() {
 }
 
 export async function publishOrderCreated(order) {
-  const ch = await connectQueue();
-  ch.sendToQueue(QUEUE_NAME, Buffer.from(JSON.stringify(order)), { persistent: true });
+  try {
+    const ch = await connectQueue();
+    ch.sendToQueue(QUEUE_NAME, Buffer.from(JSON.stringify(order)), { persistent: true });
+    queueMessagesPublishedTotal.inc({ queue: QUEUE_NAME, status: 'success' });
+  } catch (err) {
+    queueMessagesPublishedTotal.inc({ queue: QUEUE_NAME, status: 'error' });
+    throw err;
+  }
 }
