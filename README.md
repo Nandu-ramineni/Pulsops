@@ -23,7 +23,7 @@ for the full design rationale.
 | 2 | Application Foundation | ✅ done |
 | 3 | Docker Compose Environment | ✅ done |
 | 4 | Metrics Instrumentation | ✅ done |
-| 5 | Prometheus & Grafana | ⬜ not started |
+| 5 | Prometheus & Grafana | ✅ done |
 | 6 | Structured Logging & Loki | ⬜ not started |
 | 7 | OpenTelemetry & Tempo | ⬜ not started |
 | 8 | Correlating Metrics/Logs/Traces | ⬜ not started |
@@ -95,23 +95,30 @@ curl http://localhost:7000/api/orders/1
 ```
 
 Other useful endpoints while it's running:
+- **Grafana: http://localhost:3000** (admin/admin, or browse anonymously) —
+  two dashboards auto-provisioned: **Service Overview** and
+  **Dependencies**. See [docs/observability.md](docs/observability.md) for
+  what each panel means, the RED method, and why two dashboards from the
+  original spec are deliberately deferred to later phases.
+- Prometheus: http://localhost:9200 — raw metrics/query UI and scrape
+  target health (`/targets`).
 - RabbitMQ management UI: http://localhost:15672 (guest/guest) — watch the
   `order.created` queue depth live.
 - Prometheus-format `/metrics` on every service: gateway `:7000`,
   user-service `:4001`, order-service `:4002`, worker `:4003`, plus
-  RabbitMQ's own broker metrics on `:15692`. Nothing scrapes these yet —
-  that's Phase 5. See [docs/observability.md](docs/observability.md) for
-  what's measured and why (the RED method, and why each service also
-  tracks its own dependencies beyond RED).
+  RabbitMQ's own broker metrics on `:15692`.
 - `docker compose logs -f worker` — watch orders get consumed.
-- `docker compose down -v` — stop everything and wipe the Postgres volume.
+- `docker compose down -v` — stop everything and wipe all volumes
+  (Postgres data, Prometheus history, Grafana state).
 
-**Why port 7000 and not 8080:** on this dev machine, Hyper-V/WSL reserves
-large chunks of the 7975-9191 range as dynamic port exclusions, so Docker
-can't bind 8080, 8081, or 9090 to the host. The container itself still
-listens on 8080 internally — only the host-side mapping changed
-(`"7000:8080"` in `docker-compose.yml`). If your machine doesn't have this
-issue, feel free to remap it back to 8080.
+**Why port 7000 (and Prometheus on 9200, not 9090):** on this dev machine,
+Hyper-V/WSL reserves large chunks of the 7975-9191 range as dynamic port
+exclusions, so Docker can't bind 8080, 8081, 9090, or 9091 to the host.
+Same root cause both times, same fix — remap the host side only. The
+containers still listen on their standard ports internally (gateway 8080,
+Prometheus 9090) — only the host-side mapping changed
+(`"7000:8080"` and `"9200:9090"` in `docker-compose.yml`). If your machine
+doesn't have this issue, feel free to remap them back to the defaults.
 
 **A real reliability bug found and fixed during this phase:** RabbitMQ's
 Docker healthcheck (`rabbitmq-diagnostics ping`) reports "healthy" before the

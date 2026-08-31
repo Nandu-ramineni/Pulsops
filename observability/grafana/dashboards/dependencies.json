@@ -1,0 +1,129 @@
+{
+  "uid": "pulseops-dependencies",
+  "title": "PulseOps / Dependencies",
+  "tags": ["pulseops"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "PostgreSQL Query Duration (p95)",
+      "description": "By service and operation. \"operation\" is a hand-assigned label (insert_order, get_user, ...), not raw SQL.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(db_query_duration_seconds_bucket[5m])) by (le, service, operation))",
+          "legendFormat": "{{service}} / {{operation}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "PostgreSQL Connection Pool",
+      "description": "Live pg.Pool state per service. Reads 0 whenever no query has run in the last ~10s (pool's idleTimeoutMillis) - that's correct pool behavior.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "db_pool_connections",
+          "legendFormat": "{{service}} / {{state}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Redis Cache Hit Ratio",
+      "description": "order-service's user-profile cache-aside lookup.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(cache_hits_total[5m])) / (sum(rate(cache_hits_total[5m])) + sum(rate(cache_misses_total[5m])))",
+          "legendFormat": "hit ratio"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Redis Operation Latency (p95)",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(cache_operation_duration_seconds_bucket[5m])) by (le, operation))",
+          "legendFormat": "{{operation}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "user-service Dependency Call Latency (p95)",
+      "description": "order-service's outbound call to user-service on a cache miss - the \"which downstream call is slow\" signal.",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(dependency_request_duration_seconds_bucket[5m])) by (le, dependency))",
+          "legendFormat": "{{dependency}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "RabbitMQ Queue Depth",
+      "description": "Broker-native metric from RabbitMQ's own Prometheus plugin (port 15692) - queue depth is a property of the broker, not any one producer/consumer. Single queue in this system, so cluster-aggregate == that queue's depth.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rabbitmq_queue_messages_ready",
+          "legendFormat": "ready"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rabbitmq_queue_messages_unacked",
+          "legendFormat": "unacked (in flight)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Worker Processing Rate",
+      "description": "Messages consumed/sec off order.created, by outcome.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(queue_messages_consumed_total[5m])) by (status)",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    }
+  ]
+}

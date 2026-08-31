@@ -1,10 +1,8 @@
-# Observability — Metrics (Phase 4)
+# Observability — Metrics (Phases 4-5)
 
-This phase instruments every service with Prometheus-format metrics via
-`prom-client`, exposed on `/metrics`. Nothing scrapes them yet — that's
-Phase 5 (Prometheus & Grafana). This phase is purely "does the application
-expose the right signal," which is worth verifying on its own before wiring
-up the collector.
+Phase 4 instruments every service with Prometheus-format metrics via
+`prom-client`, exposed on `/metrics`. Phase 5 (this section) stands up
+Prometheus to scrape them and Grafana to visualize them.
 
 ## Why RED, and why it's not the whole picture
 
@@ -101,7 +99,7 @@ exposed on `:15692`) — verified under a 150-order burst: depth climbed to
   (`insert_order`, `get_user`, ...), not the SQL text, for the same
   cardinality reason.
 
-## Verifying it yourself
+## Verifying the raw metrics yourself
 
 ```bash
 curl http://localhost:7000/metrics   # gateway
@@ -110,6 +108,48 @@ curl http://localhost:4002/metrics   # order-service
 curl http://localhost:4003/metrics   # worker
 curl http://localhost:15692/metrics  # RabbitMQ broker metrics
 ```
+
+## Prometheus & Grafana (Phase 5)
+
+Prometheus (`observability/prometheus/prometheus.yml`) scrapes all five
+targets above every 10s and stores the time series. Grafana is provisioned
+automatically on startup — datasource and dashboards are files in
+`observability/grafana/`, not clicked together in the UI, so the whole
+observability stack is reproducible from a fresh `docker compose up`.
+
+**Access:**
+- Prometheus UI: http://localhost:9200 (mapped from the container's 9090 —
+  same Hyper-V/WSL port-exclusion issue as the gateway, see the README)
+- Grafana: http://localhost:3000 (admin/admin, or just browse anonymously —
+  anonymous Viewer access is enabled for convenience in this local dev
+  setup only)
+
+**Two dashboards shipped this phase**, both auto-provisioned:
+- **Service Overview** (`service-overview.json`) — Request Rate, Error
+  Rate, p50/p95/p99 Latency, Active Requests, CPU, Memory. Has a
+  `$service` template variable (gateway / user-service / order-service —
+  worker has no HTTP surface, so it's naturally excluded since the
+  variable is populated from `label_values(http_requests_total, service)`).
+- **Dependencies** (`dependencies.json`) — Postgres query duration and
+  pool state, Redis hit ratio and latency, the order-service→user-service
+  dependency call latency, RabbitMQ queue depth, worker processing rate.
+
+**Two dashboards from the original spec are deliberately not built yet:**
+Executive Reliability Overview needs error budget/SLO/MTTD/MTTR data that
+doesn't exist until Phases 9-13; Incident Investigation needs log and trace
+panels that don't exist until Phases 6-7. Building them now would mean
+empty or fake panels — they land when the data backing them is real.
+
+**A cosmetic bug found and fixed while verifying panels in the browser:**
+the Error Rate panel's y-axis auto-scaled to 10000% when every service's
+error rate was flat at 0 (an idle Prometheus query result set still
+produces valid data, so this wasn't a "no data" case — Grafana just picked
+an odd auto-range for a zero-variance series). Fixed by pinning
+`min: 0, max: 1` on that panel instead of leaving the axis to auto-scale.
+This is why every dashboard here was actually opened and screenshotted
+during this phase, not just checked via the Prometheus query API — a
+query returning the right numbers doesn't guarantee the panel renders
+sensibly.
 
 ## Interview Questions This Phase Should Prepare You For
 
@@ -132,3 +172,15 @@ curl http://localhost:15692/metrics  # RabbitMQ broker metrics
    visibility into what's still sitting in the queue, especially with
    multiple producers/consumers. That number only exists in one place: the
    broker itself.
+5. "Why provision Grafana from files instead of building dashboards in the
+   UI?" — A dashboard built by hand in the UI lives only in that one
+   Grafana instance's database; it's not reviewable in a PR, not
+   reproducible on a fresh environment, and easy to accidentally edit
+   during an incident. File-based provisioning (`observability/grafana/`)
+   makes the dashboard itself a versioned artifact.
+6. "Why not build all four dashboards from the spec right away?" — Two of
+   them (Executive Overview, Incident Investigation) depend on data that
+   doesn't exist until later phases (SLOs/error budgets, logs/traces).
+   Building the panels now would mean shipping something that either shows
+   nothing or has to be faked — building incrementally as each data source
+   comes online avoids both.
