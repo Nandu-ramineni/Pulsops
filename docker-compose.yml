@@ -118,6 +118,37 @@ services:
     ports:
       - "9200:9090"
 
+  loki:
+    image: grafana/loki:3.2.1
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+
+  # Grafana Alloy reads container logs off the Docker API and pushes them to
+  # Loki. It replaces Promtail, which reached end-of-life in 2026.
+  alloy:
+    image: grafana/alloy:v1.5.1
+    restart: unless-stopped
+    # Runs as root purely to read the Docker socket.
+    user: root
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    ports:
+      - "12345:12345" # Alloy's own UI - shows per-component health
+    depends_on:
+      - loki
+
   grafana:
     image: grafana/grafana:11.2.0
     restart: unless-stopped
@@ -135,8 +166,11 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+      - loki
 
 volumes:
   postgres-data:
   prometheus-data:
   grafana-data:
+  loki-data:
+  alloy-data:

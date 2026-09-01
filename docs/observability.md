@@ -1,8 +1,9 @@
-# Observability — Metrics (Phases 4-5)
+# Observability — Metrics & Logs (Phases 4-6)
 
 Phase 4 instruments every service with Prometheus-format metrics via
-`prom-client`, exposed on `/metrics`. Phase 5 (this section) stands up
-Prometheus to scrape them and Grafana to visualize them.
+`prom-client`, exposed on `/metrics`. Phase 5 stands up Prometheus to scrape
+them and Grafana to visualize them. Phase 6 adds the second pillar:
+structured JSON logs, correlated by request ID and queryable in Loki.
 
 ## Why RED, and why it's not the whole picture
 
@@ -151,6 +152,132 @@ during this phase, not just checked via the Prometheus query API — a
 query returning the right numbers doesn't guarantee the panel renders
 sensibly.
 
+## Structured Logging & Loki (Phase 6)
+
+Every service logs JSON via [pino](https://getpino.io), one object per line,
+in the shape the project spec calls for:
+
+```json
+{"level":"info","timestamp":"2026-09-01T18:46:10.020Z","service":"gateway",
+ "requestId":"0f477836-f785-4519-af76-42a094dc4a28","method":"GET",
+ "route":"/api/users","statusCode":404,"durationMs":12.33,
+ "message":"request completed with client error"}
+```
+
+There are no `console.log` calls left anywhere in `services/` — a single
+unstructured line in the stream is a line Loki can't parse and an engineer
+can't filter on. That includes third-party output:
+`http-proxy-middleware` writes to the console by default, so the gateway
+routes it through pino via a custom `logProvider`.
+
+### Correlation IDs vs trace IDs
+
+The spec asks for this distinction explicitly, and it matters because the
+two are easy to conflate:
+
+| | Correlation ID (`requestId`) | Trace ID (Phase 7) |
+|---|---|---|
+| **Defined by** | Us — it's an application convention | The W3C Trace Context standard |
+| **Carried on** | Whatever we choose (`x-request-id` header, AMQP `correlationId` property) | The `traceparent` header, by spec |
+| **Granularity** | One logical user action | One distributed call tree, subdivided into spans |
+| **Answers** | "Show me every log line from this request" | "Where in the call graph did the time go / the error happen?" |
+| **Survives** | Anything we choose to propagate it across, including retries and queue hops | The boundaries the tracing SDK instruments |
+
+They're complementary, not redundant. A correlation ID is a *filter key for
+logs*; a trace ID is a *structure* — a tree of timed spans. A correlation
+ID can deliberately outlive a single trace (e.g. spanning a retry that
+produces three separate traces), which is exactly why it's worth keeping
+even after tracing lands in Phase 7. Phase 8 puts both on every log line so
+you can pivot between them.
+
+### How the correlation ID actually propagates
+
+```mermaid
+flowchart LR
+    C[Client] -->|no header| GW[gateway<br/>generates UUID]
+    GW -->|x-request-id| OS[order-service]
+    OS -->|x-request-id| US[user-service]
+    OS -->|AMQP correlationId| MQ[[RabbitMQ]]
+    MQ --> WK[worker]
+```
+
+Three things make this work:
+
+1. **`AsyncLocalStorage`** (`src/logger.js` in each service) holds the
+   current request's ID, and a pino `mixin` reads it on every log call. No
+   function has to accept a `requestId` argument or thread a logger through
+   its signature — including code several async hops deep, like the Redis
+   client or the pg pool wrapper.
+2. **Inbound IDs are honored, not overwritten.** Each service uses an
+   incoming `x-request-id` if present and only generates one when it's the
+   entry point, so a single user action keeps one ID end to end. The
+   middleware also writes it back onto `req.headers`, which is what makes
+   `http-proxy-middleware` forward it downstream automatically.
+3. **The queue hop uses AMQP's native `correlationId` message property**,
+   not a field stuffed into the JSON body. The correlation ID rides the
+   protocol, so the message payload stays a clean domain object.
+
+That third point is the interesting one: an HTTP header obviously can't
+cross a message queue. Verified end to end — one `POST /api/orders`
+produced these six lines, all matching a single ID, from four services:
+
+```text
+[gateway       ] info  request completed
+[order-service ] info  order created
+[order-service ] info  published order.created
+[user-service  ] info  request completed
+[order-service ] info  request completed
+[worker        ] info  order processed
+```
+
+### Loki labels vs structured metadata (the cardinality lesson again)
+
+Alloy promotes exactly one field from the JSON to a real Loki label:
+
+- **`level`** → label. Low cardinality (`info`/`warn`/`error`/`debug`), so
+  `{job="pulseops", level="error"}` is a cheap index lookup.
+- **`requestId`** → **structured metadata**, *not* a label. It has one
+  value per request; making it a label would create a new Loki stream per
+  request and destroy the index. This is the same cardinality discipline as
+  the Prometheus label rules above — Loki's structured metadata (schema v13
+  + TSDB, enabled via `allow_structured_metadata` in the Loki config) exists
+  precisely for high-cardinality correlation fields like this one.
+
+`service` and `container` come from Docker labels via
+`discovery.relabel`, not from the log body, so infrastructure containers
+(postgres, redis, rabbitmq) that log plain text are still labeled and
+searchable even though the JSON stage extracts nothing from them.
+
+### Why Grafana Alloy instead of Promtail
+
+Promtail is the agent most tutorials still show, but it reached
+end-of-life in 2026; Alloy is its supported successor. Alloy also reads
+logs through the **Docker API** rather than by mounting the host's
+container log directory, which is what makes this configuration work
+identically on Docker Desktop for Windows and on a Linux host.
+
+### Querying it
+
+Grafana → Explore → Loki datasource, or the **Warnings & Errors** panel now
+on the Service Overview dashboard.
+
+```logql
+# every log line from one request, across all four services
+{job="pulseops"} | requestId=`0f477836-f785-4519-af76-42a094dc4a28`
+
+# all errors and warnings, cheap index lookup on the level label
+{job="pulseops", level=~"warn|error"}
+
+# one service, parsing JSON fields for further filtering
+{job="pulseops", service="order-service"} | json | statusCode >= 500
+```
+
+The Service Overview dashboard's `$service` variable is sourced from
+`process_cpu_seconds_total` rather than `http_requests_total` specifically
+so the **worker** — which has no HTTP surface and therefore no RED metrics —
+is still selectable for its CPU, memory and log panels. Selecting only the
+worker leaves the RED panels legitimately empty.
+
 ## Interview Questions This Phase Should Prepare You For
 
 1. "Why a Histogram instead of tracking min/max/avg latency?" — Histograms
@@ -184,3 +311,23 @@ sensibly.
    Building the panels now would mean shipping something that either shows
    nothing or has to be faked — building incrementally as each data source
    comes online avoids both.
+7. "What's the difference between a correlation ID and a trace ID?" — See
+   the table above. Short version: the correlation ID is an application
+   convention and a filter key for logs; the trace ID is a standard
+   (W3C Trace Context) identifying a tree of timed spans. One tells you
+   *which lines belong together*, the other tells you *where the time
+   went*.
+8. "How do you propagate a correlation ID across a message queue?" — Not
+   with an HTTP header, which can't cross that boundary. Use the broker's
+   native correlation field (AMQP's `correlationId` message property here)
+   so the ID travels with the message without polluting the payload
+   schema.
+9. "Why is `requestId` not a Loki label?" — Unbounded cardinality. One
+   stream per request would destroy the index. Loki's structured metadata
+   is built for exactly this: high-cardinality fields you need to filter
+   on but must not index as labels. Same discipline as Prometheus labels.
+10. "How do you avoid passing a logger into every function just to keep the
+    request ID attached?" — `AsyncLocalStorage`, with the logger reading
+    the current context on each call (pino's `mixin`). The alternative —
+    threading a `requestId` parameter through every signature — is the
+    thing that makes teams give up on correlation entirely.

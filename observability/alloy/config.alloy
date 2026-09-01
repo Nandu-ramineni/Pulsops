@@ -1,0 +1,79 @@
+// Grafana Alloy collects container logs from the Docker API and ships them
+// to Loki. Alloy replaces Promtail, which reached end-of-life in 2026.
+//
+// Reading via the Docker API (rather than mounting the host log directory)
+// is what makes this work identically on Docker Desktop for Windows and on
+// a Linux host.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // The compose service name is the label an engineer actually thinks in
+  // ("order-service"), so it becomes the primary Loki label.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // Docker prefixes container names with a slash; strip it.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = { job = "pulseops" }
+  forward_to = [loki.process.app_logs.receiver]
+}
+
+loki.process "app_logs" {
+  // Parse the JSON pino emits. Infrastructure containers (postgres, redis,
+  // rabbitmq) log plain text; this stage simply extracts nothing for them
+  // and their lines still arrive intact.
+  stage.json {
+    expressions = {
+      level     = "level",
+      requestId = "requestId",
+    }
+  }
+
+  // level is low-cardinality (info/warn/error/debug), so it is safe and
+  // useful as a real Loki label - it makes {level="error"} a cheap query.
+  stage.labels {
+    values = {
+      level = "level",
+    }
+  }
+
+  // requestId is unbounded (one value per request). Making it a label would
+  // create a new Loki stream per request and destroy the index - structured
+  // metadata is purpose-built for exactly this kind of high-cardinality
+  // correlation field.
+  stage.structured_metadata {
+    values = {
+      requestId = "requestId",
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

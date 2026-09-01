@@ -13,7 +13,8 @@
         "name": "service",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "query": { "query": "label_values(http_requests_total, service)", "refId": "service" },
+        "query": { "query": "label_values(process_cpu_seconds_total, service)", "refId": "service" },
+        "description": "Sourced from process_cpu_seconds_total rather than http_requests_total so the worker (which has no HTTP surface) is selectable for its CPU, memory and log panels. The RED panels are legitimately empty when only the worker is selected.",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -126,6 +127,28 @@
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "process_resident_memory_bytes{service=~\"$service\"}",
           "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Warnings & Errors (Loki)",
+      "description": "Closes the metrics-to-logs gap: when a panel above spikes, the log lines behind it are on the same screen. Filters on the 'level' Loki label, which Alloy promotes from the JSON - so this is an index lookup, not a full-text scan. Expand a line to see its requestId, then query {job=\"pulseops\"} | requestId=`<id>` in Explore to follow that one request across every service it touched.",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 10 },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "enableLogDetails": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"pulseops\", service=~\"$service\", level=~\"warn|error\"}",
+          "queryType": "range"
         }
       ]
     }

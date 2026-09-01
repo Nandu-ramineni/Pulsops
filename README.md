@@ -24,7 +24,7 @@ for the full design rationale.
 | 3 | Docker Compose Environment | ✅ done |
 | 4 | Metrics Instrumentation | ✅ done |
 | 5 | Prometheus & Grafana | ✅ done |
-| 6 | Structured Logging & Loki | ⬜ not started |
+| 6 | Structured Logging & Loki | ✅ done |
 | 7 | OpenTelemetry & Tempo | ⬜ not started |
 | 8 | Correlating Metrics/Logs/Traces | ⬜ not started |
 | 9 | SLI/SLO Design | ⬜ not started |
@@ -60,7 +60,7 @@ Full rationale, request-path tracing walkthrough, and technology decisions are i
 ```text
 pulseops/
 ├── services/           gateway, user-service, order-service, worker
-├── observability/       prometheus, grafana, loki, tempo, alertmanager, otel config
+├── observability/       prometheus, grafana, loki, alloy, tempo, alertmanager config
 ├── incidents/           reproducible failure scenarios + investigation writeups
 ├── load-tests/          k6 scripts
 ├── scripts/              failure-injection scripts (kill-service, break-redis, ...)
@@ -102,6 +102,17 @@ Other useful endpoints while it's running:
   original spec are deliberately deferred to later phases.
 - Prometheus: http://localhost:9200 — raw metrics/query UI and scrape
   target health (`/targets`).
+- Loki: http://localhost:3100 — query logs from Grafana's **Explore** tab
+  (pick the Loki datasource). Every service logs structured JSON carrying a
+  `requestId`, so one query follows a single request across all four
+  services *and* across the RabbitMQ hop:
+  ```logql
+  {job="pulseops"} | requestId=`<paste-an-id>`
+  ```
+  Any response from the gateway returns its ID in the `x-request-id`
+  header, so `curl -i` gives you something to paste.
+- Grafana Alloy: http://localhost:12345 — the log shipper's own UI, showing
+  per-component health if logs ever stop arriving.
 - RabbitMQ management UI: http://localhost:15672 (guest/guest) — watch the
   `order.created` queue depth live.
 - Prometheus-format `/metrics` on every service: gateway `:7000`,
