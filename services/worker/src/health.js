@@ -1,5 +1,6 @@
 import http from 'http';
 import { register } from './metrics.js';
+import { logger } from './logger.js';
 
 let ready = false;
 
@@ -22,6 +23,6 @@ export function startHealthServer(port) {
     res.writeHead(404);
     res.end();
   });
-  server.listen(port, () => console.log(`worker health server listening on ${port}`));
+  server.listen(port, () => logger.info({ port }, 'worker health server listening'));
   return server;
 }

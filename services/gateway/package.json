@@ -12,6 +12,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "http-proxy-middleware": "^2.0.6",
+    "pino": "^9.5.0",
     "prom-client": "^15.1.3"
   }
 }

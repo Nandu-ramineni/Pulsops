@@ -2,6 +2,7 @@ import express from 'express';
 import { query } from '../db.js';
 import { getUser } from '../userClient.js';
 import { publishOrderCreated } from '../queue.js';
+import { logger } from '../logger.js';
 
 const router = express.Router();
 
@@ -25,6 +26,7 @@ router.post('/', async (req, res, next) => {
       'insert_order'
     );
     const order = result.rows[0];
+    logger.info({ orderId: order.id, userId, item, quantity }, 'order created');
 
     await publishOrderCreated(order);
 

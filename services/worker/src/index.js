@@ -3,6 +3,7 @@ import amqplib from 'amqplib';
 import { query } from './db.js';
 import { startHealthServer, setReady } from './health.js';
 import { queueMessagesConsumedTotal, queueMessageProcessingDuration, workerActiveJobs } from './metrics.js';
+import { logger, requestContext } from './logger.js';
 
 const QUEUE_NAME = 'order.created';
 const PREFETCH = Number(process.env.PREFETCH || 5);
@@ -29,7 +30,7 @@ async function connectWithRetry(url, { attempts = 10, baseDelayMs = 1000, maxDel
     } catch (err) {
       if (attempt === attempts) throw err;
       const delay = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
-      console.error(`rabbitmq connect attempt ${attempt}/${attempts} failed (${err.message}), retrying in ${delay}ms`);
+      logger.warn({ err, attempt, attempts, retryInMs: delay }, 'rabbitmq connect failed, retrying');
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
@@ -44,38 +45,46 @@ async function main() {
   channel.prefetch(PREFETCH);
 
   setReady(true);
-  console.log(`worker consuming "${QUEUE_NAME}", prefetch=${PREFETCH}`);
+  logger.info({ queue: QUEUE_NAME, prefetch: PREFETCH }, 'worker consuming');
 
   channel.consume(QUEUE_NAME, async (msg) => {
     if (!msg) return;
-    let order;
-    workerActiveJobs.inc();
-    const endTimer = queueMessageProcessingDuration.startTimer({ queue: QUEUE_NAME });
-    try {
-      order = JSON.parse(msg.content.toString());
-      await simulateProcessing();
-      await updateOrderStatus(order.id, 'completed');
-      queueMessagesConsumedTotal.inc({ queue: QUEUE_NAME, status: 'completed' });
-      console.log(`order ${order.id} completed`);
-      channel.ack(msg);
-    } catch (err) {
-      queueMessagesConsumedTotal.inc({ queue: QUEUE_NAME, status: 'failed' });
-      console.error(`failed to process order ${order && order.id}`, err.message);
-      channel.nack(msg, false, false);
-    } finally {
-      endTimer();
-      workerActiveJobs.dec();
-    }
+    // The correlation ID rode across the queue on the AMQP correlationId
+    // property, so reopening the context here puts the worker's log lines
+    // in the same Loki query as the HTTP request that created the order -
+    // across an async boundary the HTTP header alone could not cross.
+    const requestId = msg.properties?.correlationId;
+
+    await requestContext.run({ requestId }, async () => {
+      let order;
+      workerActiveJobs.inc();
+      const endTimer = queueMessageProcessingDuration.startTimer({ queue: QUEUE_NAME });
+      try {
+        order = JSON.parse(msg.content.toString());
+        await simulateProcessing();
+        await updateOrderStatus(order.id, 'completed');
+        queueMessagesConsumedTotal.inc({ queue: QUEUE_NAME, status: 'completed' });
+        logger.info({ orderId: order.id, queue: QUEUE_NAME }, 'order processed');
+        channel.ack(msg);
+      } catch (err) {
+        queueMessagesConsumedTotal.inc({ queue: QUEUE_NAME, status: 'failed' });
+        logger.error({ err, orderId: order?.id, queue: QUEUE_NAME }, 'failed to process order');
+        channel.nack(msg, false, false);
+      } finally {
+        endTimer();
+        workerActiveJobs.dec();
+      }
+    });
   });
 
   connection.on('close', () => {
-    console.error('rabbitmq connection closed, exiting');
+    logger.error('rabbitmq connection closed, exiting');
     setReady(false);
     process.exit(1);
   });
 }
 
 main().catch((err) => {
-  console.error('worker failed to start', err);
+  logger.error({ err }, 'worker failed to start');
   process.exit(1);
 });

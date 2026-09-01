@@ -1,4 +1,5 @@
 import { connectRedis } from './redisClient.js';
+import { logger, getRequestId, REQUEST_ID_HEADER } from './logger.js';
 import {
   cacheHitsTotal,
   cacheMissesTotal,
@@ -30,17 +31,25 @@ export async function getUser(userId) {
 
   if (cached) {
     cacheHitsTotal.inc({ cache: CACHE_NAME });
+    logger.debug({ cache: CACHE_NAME, userId, outcome: 'hit' }, 'cache lookup');
     return { user: JSON.parse(cached), source: 'cache' };
   }
   cacheMissesTotal.inc({ cache: CACHE_NAME });
+  logger.debug({ cache: CACHE_NAME, userId, outcome: 'miss' }, 'cache lookup');
 
   const depTimer = dependencyRequestDuration.startTimer({ dependency: 'user-service' });
   let response;
   try {
-    response = await fetch(`${process.env.USER_SERVICE_URL}/users/${userId}`);
+    // Forwarding the correlation ID is what lets one Loki query show this
+    // request's log lines from order-service AND user-service together.
+    const requestId = getRequestId();
+    response = await fetch(`${process.env.USER_SERVICE_URL}/users/${userId}`, {
+      headers: requestId ? { [REQUEST_ID_HEADER]: requestId } : {},
+    });
   } catch (err) {
     depTimer();
     dependencyRequestsTotal.inc({ dependency: 'user-service', status: 'error' });
+    logger.error({ err, dependency: 'user-service', userId }, 'dependency call failed');
     throw err;
   }
   depTimer();
@@ -63,9 +72,12 @@ export async function getUser(userId) {
     setTimer();
   } catch (err) {
     // A cache write failure shouldn't fail an otherwise-successful lookup -
-    // count it and move on, the next request just misses again.
+    // count it and move on, the next request just misses again. Logged at
+    // warn because silent degradation is exactly what makes the Redis
+    // incident hard to spot.
     setTimer();
     cacheErrorsTotal.inc({ cache: CACHE_NAME, operation: 'set' });
+    logger.warn({ err, cache: CACHE_NAME, userId }, 'cache write failed, continuing without caching');
   }
 
   return { user, source: 'origin' };
