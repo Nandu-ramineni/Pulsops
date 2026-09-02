@@ -30,20 +30,6 @@ services:
       timeout: 5s
       retries: 10
 
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    ports:
-      - "5672:5672"   # AMQP
-      - "15672:15672" # management UI (guest/guest)
-      - "15692:15692" # Prometheus metrics (broker-native queue depth etc.)
-    volumes:
-      - ./observability/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   user-service:
     build: ./services/user-service
     restart: unless-stopped
@@ -63,7 +49,6 @@ services:
       PORT: 4002
       DATABASE_URL: *database-url
       REDIS_URL: redis://redis:6379
-      RABBITMQ_URL: amqp://rabbitmq:5672
       USER_SERVICE_URL: http://user-service:4001
       USER_CACHE_TTL_SECONDS: 60
     ports:
@@ -72,8 +57,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       user-service:
         condition: service_started
@@ -84,14 +67,11 @@ services:
     environment:
       HEALTH_PORT: 4003
       DATABASE_URL: *database-url
-      RABBITMQ_URL: amqp://rabbitmq:5672
       PREFETCH: 5
     ports:
       - "4003:4003"
     depends_on:
       postgres:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
 
   gateway:
@@ -102,7 +82,7 @@ services:
       USER_SERVICE_URL: http://user-service:4001
       ORDER_SERVICE_URL: http://order-service:4002
     ports:
-      - "7000:8080"
+      - "8080:8080"
     depends_on:
       user-service:
         condition: service_started

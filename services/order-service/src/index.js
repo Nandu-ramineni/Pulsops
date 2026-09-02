@@ -44,11 +44,11 @@ app.use((err, _req, res, _next) => {
 
   if (status >= 500) {
     logger.error({ err }, 'unhandled error in request pipeline');
-    return res.status(500).json({ error: 'internal error' });
+    return res.status(500).json({ error: 'internal error', message: err.message });
   }
 
   logger.warn({ err, statusCode: status }, 'request rejected as client error');
-  return res.status(status).json({ error: 'invalid request' });
+  return res.status(status).json({ error: 'invalid request', message: err.message });
 });
 
 app.listen(PORT, () => {

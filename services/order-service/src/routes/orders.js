@@ -14,6 +14,7 @@ router.post('/', async (req, res, next) => {
 
   try {
     const { user } = await getUser(userId);
+    
     if (!user) {
       return res.status(404).json({ error: `user ${userId} not found` });
     }
