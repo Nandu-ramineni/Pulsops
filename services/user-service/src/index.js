@@ -33,8 +33,19 @@ app.get('/metrics', async (_req, res) => {
 app.use('/users', usersRouter);
 
 app.use((err, _req, res, _next) => {
-  logger.error({ err }, 'unhandled error in request pipeline');
-  res.status(500).json({ error: 'internal error' });
+  // express.json() raises a SyntaxError carrying status 400 for a malformed
+  // body. Flattening every error to 500 would let a client's bad payload
+  // burn the error budget and page someone - the SLO and burn-rate alerts
+  // in Phases 9-12 key off 5xx specifically.
+  const status = err.status || err.statusCode || 500;
+
+  if (status >= 500) {
+    logger.error({ err }, 'unhandled error in request pipeline');
+    return res.status(500).json({ error: 'internal error' });
+  }
+
+  logger.warn({ err, statusCode: status }, 'request rejected as client error');
+  return res.status(status).json({ error: 'invalid request' });
 });
 
 app.listen(PORT, () => {
