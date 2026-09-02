@@ -89,23 +89,29 @@
     },
     {
       "id": 6,
-      "title": "RabbitMQ Queue Depth",
-      "description": "Broker-native metric from RabbitMQ's own Prometheus plugin (port 15692) - queue depth is a property of the broker, not any one producer/consumer. Single queue in this system, so cluster-aggregate == that queue's depth.",
+      "title": "Queue Backlog Trend (derived proxy)",
+      "description": "NOT true queue depth. RabbitMQ moved to CloudAMQP, so the broker-native rabbitmq_queue_messages metric is no longer scraped - see the KNOWN GAP note in observability/prometheus/prometheus.yml. This derives the trend from the app side instead: publish rate minus consume rate. Above zero means the queue is growing faster than the worker drains it; sustained time above zero is the backlog signal. It cannot show absolute depth, and it cannot see messages that were already queued before this window - restoring that needs CloudAMQP's own metrics endpoint.",
       "type": "timeseries",
       "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
-      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rabbitmq_queue_messages_ready",
-          "legendFormat": "ready"
+          "expr": "sum(rate(queue_messages_published_total{status=\"success\"}[5m])) - sum(rate(queue_messages_consumed_total[5m]))",
+          "legendFormat": "net growth (publish - consume)"
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rabbitmq_queue_messages_unacked",
-          "legendFormat": "unacked (in flight)"
+          "expr": "sum(rate(queue_messages_published_total{status=\"success\"}[5m]))",
+          "legendFormat": "published/s"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(queue_messages_consumed_total[5m]))",
+          "legendFormat": "consumed/s"
         }
       ]
     },

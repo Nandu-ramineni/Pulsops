@@ -4,7 +4,18 @@ import { query } from './db.js';
 import { connectRedis } from './redisClient.js';
 import ordersRouter from './routes/orders.js';
 import { register, httpMetricsMiddleware } from './metrics.js';
-import { logger, requestLoggingMiddleware } from './logger.js';
+import { logger, requestLoggingMiddleware, describeError } from './logger.js';
+
+// Fail loudly at boot on missing config. amqplib silently falls back to
+// amqp://localhost when RABBITMQ_URL is undefined, which turns a config
+// mistake into a confusing ECONNREFUSED on the first order instead of an
+// obvious startup failure.
+const REQUIRED_ENV = ['DATABASE_URL', 'REDIS_URL', 'RABBITMQ_URL', 'USER_SERVICE_URL'];
+const missingEnv = REQUIRED_ENV.filter((key) => !process.env[key]);
+if (missingEnv.length > 0) {
+  logger.error({ missing: missingEnv }, 'missing required environment variables, refusing to start');
+  process.exit(1);
+}
 
 const app = express();
 const PORT = process.env.PORT || 4002;
@@ -44,11 +55,11 @@ app.use((err, _req, res, _next) => {
 
   if (status >= 500) {
     logger.error({ err }, 'unhandled error in request pipeline');
-    return res.status(500).json({ error: 'internal error', message: err.message });
+    return res.status(500).json({ error: 'internal error', message: describeError(err) });
   }
 
   logger.warn({ err, statusCode: status }, 'request rejected as client error');
-  return res.status(status).json({ error: 'invalid request', message: err.message });
+  return res.status(status).json({ error: 'invalid request', message: describeError(err) });
 });
 
 app.listen(PORT, () => {

@@ -8,6 +8,16 @@ import { logger, requestContext } from './logger.js';
 const QUEUE_NAME = 'order.created';
 const PREFETCH = Number(process.env.PREFETCH || 5);
 
+// Fail loudly at boot on missing config. amqplib silently falls back to
+// amqp://localhost when RABBITMQ_URL is undefined, which would send the
+// worker into its retry/backoff loop against the wrong host entirely.
+const REQUIRED_ENV = ['DATABASE_URL', 'RABBITMQ_URL'];
+const missingEnv = REQUIRED_ENV.filter((key) => !process.env[key]);
+if (missingEnv.length > 0) {
+  logger.error({ missing: missingEnv }, 'missing required environment variables, refusing to start');
+  process.exit(1);
+}
+
 // Simulates variable processing time so queue depth / consumer lag are
 // visible under load once metrics land in Phase 4.
 function simulateProcessing() {

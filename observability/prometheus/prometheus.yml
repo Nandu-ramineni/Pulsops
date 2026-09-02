@@ -31,9 +31,16 @@ scrape_configs:
         labels:
           service: worker
 
-  - job_name: rabbitmq
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["rabbitmq:15692"]
-        labels:
-          service: rabbitmq
+  # RabbitMQ moved to CloudAMQP, so the local broker container (and the
+  # rabbitmq_prometheus plugin on :15692 that this job used to scrape) is
+  # gone. The job is removed rather than left failing, because a permanently
+  # down target trains you to ignore red targets - and worse, while the old
+  # orphaned container was still running it reported "up" and fed the
+  # Dependencies dashboard the queue depth of a broker nothing was using.
+  #
+  # KNOWN GAP: broker-native queue depth is currently unobservable. Restoring
+  # it means scraping CloudAMQP's own metrics endpoint (their Prometheus
+  # integration, or the management API via an exporter) - it cannot come from
+  # the app, since depth is a property of the broker, not of any producer or
+  # consumer. The app-side signals (queue_messages_published_total,
+  # queue_messages_consumed_total, worker_active_jobs) are unaffected.

@@ -49,6 +49,10 @@ services:
       PORT: 4002
       DATABASE_URL: *database-url
       REDIS_URL: redis://redis:6379
+      # Fails the compose command outright if unset, rather than letting
+      # amqplib silently fall back to amqp://localhost and surface as a
+      # confusing ECONNREFUSED on the first order.
+      RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL in .env (see .env.example)}
       USER_SERVICE_URL: http://user-service:4001
       USER_CACHE_TTL_SECONDS: 60
     ports:
@@ -67,6 +71,7 @@ services:
     environment:
       HEALTH_PORT: 4003
       DATABASE_URL: *database-url
+      RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL in .env (see .env.example)}
       PREFETCH: 5
     ports:
       - "4003:4003"
