@@ -3,6 +3,7 @@ import express from 'express';
 import { query } from './db.js';
 import { connectRedis } from './redisClient.js';
 import ordersRouter from './routes/orders.js';
+import { warmQueueConnection } from './queue.js';
 import { register, httpMetricsMiddleware } from './metrics.js';
 import { logger, requestLoggingMiddleware, describeError } from './logger.js';
 
@@ -64,4 +65,5 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, () => {
   logger.info({ port: PORT }, 'order-service listening');
+  warmQueueConnection();
 });
