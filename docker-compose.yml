@@ -2,6 +2,13 @@ name: pulseops
 
 x-database-url: &database-url postgres://${POSTGRES_USER:-pulseops}:${POSTGRES_PASSWORD:-pulseops}@postgres:5432/${POSTGRES_DB:-pulseops}
 
+# Services export OTLP to Alloy, not straight to Tempo, so the backend can be
+# swapped or sampled without redeploying any service. OTEL_SERVICE_NAME is set
+# per service below and is what Tempo shows as the service in a trace.
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -34,6 +41,8 @@ services:
     build: ./services/user-service
     restart: unless-stopped
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: user-service
       PORT: 4001
       DATABASE_URL: *database-url
     ports:
@@ -46,6 +55,8 @@ services:
     build: ./services/order-service
     restart: unless-stopped
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: order-service
       PORT: 4002
       DATABASE_URL: *database-url
       REDIS_URL: redis://redis:6379
@@ -69,6 +80,8 @@ services:
     build: ./services/worker
     restart: unless-stopped
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: worker
       HEALTH_PORT: 4003
       DATABASE_URL: *database-url
       RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL in .env (see .env.example)}
@@ -83,6 +96,8 @@ services:
     build: ./services/gateway
     restart: unless-stopped
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: gateway
       PORT: 8080
       USER_SERVICE_URL: http://user-service:4001
       ORDER_SERVICE_URL: http://order-service:4002
@@ -113,8 +128,20 @@ services:
     ports:
       - "3100:3100"
 
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/tempo-config.yml
+    user: root
+    volumes:
+      - ./observability/tempo/tempo-config.yml:/etc/tempo/tempo-config.yml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200" # Tempo query API / Grafana datasource
+
   # Grafana Alloy reads container logs off the Docker API and pushes them to
-  # Loki. It replaces Promtail, which reached end-of-life in 2026.
+  # Loki, and (Phase 7) receives OTLP traces from the services and forwards
+  # them to Tempo. It replaces Promtail, which reached end-of-life in 2026.
   alloy:
     image: grafana/alloy:v1.5.1
     restart: unless-stopped
@@ -133,6 +160,7 @@ services:
       - "12345:12345" # Alloy's own UI - shows per-component health
     depends_on:
       - loki
+      - tempo
 
   grafana:
     image: grafana/grafana:11.2.0
@@ -142,6 +170,12 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Explore requires edit permissions, and Explore is exactly how the
+      # logs (Phase 6) and traces (Phase 7) workflows are driven. Without
+      # this, anonymous users are silently redirected to the home page when
+      # they follow an Explore link. Dashboards remain read-only because
+      # they are file-provisioned.
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
     volumes:
       - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
@@ -159,3 +193,4 @@ volumes:
   grafana-data:
   loki-data:
   alloy-data:
+  tempo-data:

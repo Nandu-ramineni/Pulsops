@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import pino from 'pino';
+import { trace } from '@opentelemetry/api';
 
 const SERVICE_NAME = 'user-service';
 export const REQUEST_ID_HEADER = 'x-request-id';
@@ -43,7 +44,19 @@ export const logger = pino({
   serializers: { err: serializeError },
   mixin() {
     const store = requestContext.getStore();
-    return store?.requestId ? { requestId: store.requestId } : {};
+    const fields = store?.requestId ? { requestId: store.requestId } : {};
+
+    // traceId/spanId come from the active OpenTelemetry span rather than from
+    // our own context, so every log line can be pivoted straight to the trace
+    // that produced it (and back again) - see docs/observability.md on
+    // correlation IDs vs trace IDs.
+    const span = trace.getActiveSpan();
+    if (span) {
+      const spanContext = span.spanContext();
+      fields.traceId = spanContext.traceId;
+      fields.spanId = spanContext.spanId;
+    }
+    return fields;
   },
 });
 

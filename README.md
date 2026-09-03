@@ -25,7 +25,7 @@ for the full design rationale.
 | 4 | Metrics Instrumentation | ✅ done |
 | 5 | Prometheus & Grafana | ✅ done |
 | 6 | Structured Logging & Loki | ✅ done |
-| 7 | OpenTelemetry & Tempo | ⬜ not started |
+| 7 | OpenTelemetry & Tempo | ✅ done |
 | 8 | Correlating Metrics/Logs/Traces | ⬜ not started |
 | 9 | SLI/SLO Design | ⬜ not started |
 | 10 | Error Budgets & Burn Rates | ⬜ not started |
@@ -111,8 +111,16 @@ Other useful endpoints while it's running:
   ```
   Any response from the gateway returns its ID in the `x-request-id`
   header, so `curl -i` gives you something to paste.
-- Grafana Alloy: http://localhost:12345 — the log shipper's own UI, showing
-  per-component health if logs ever stop arriving.
+- Tempo: http://localhost:3200 — distributed traces. Query them from
+  Grafana's **Explore** tab with the Tempo datasource. Every log line
+  emitted inside a request carries a `traceId`, so you can copy one
+  straight out of a log into Explore and get the full span waterfall:
+  one `POST /api/orders` is **49 spans across all four services**,
+  including the hop across RabbitMQ into the worker.
+- Grafana Alloy: http://localhost:12345 — the single telemetry agent's own
+  UI. It ships container logs to Loki *and* receives OTLP traces from the
+  services and forwards them to Tempo, so this is the first place to look
+  if either logs or traces stop arriving.
 - RabbitMQ management UI: http://localhost:15672 (guest/guest) — watch the
   `order.created` queue depth live.
 - Prometheus-format `/metrics` on every service: gateway `:7000`,

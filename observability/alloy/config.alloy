@@ -77,3 +77,34 @@ loki.write "default" {
     url = "http://loki:3100/loki/api/v1/push"
   }
 }
+
+// ---------------------------------------------------------------------------
+// Traces (Phase 7)
+//
+// The services export OTLP to Alloy rather than straight to Tempo. That extra
+// hop is deliberate: it means the application only ever needs to know about
+// one local collector endpoint, and the backend behind it can be swapped,
+// sampled, or fanned out without redeploying a single service.
+// ---------------------------------------------------------------------------
+
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}

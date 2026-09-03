@@ -1,9 +1,11 @@
-# Observability — Metrics & Logs (Phases 4-6)
+# Observability — Metrics, Logs & Traces (Phases 4-7)
 
 Phase 4 instruments every service with Prometheus-format metrics via
 `prom-client`, exposed on `/metrics`. Phase 5 stands up Prometheus to scrape
 them and Grafana to visualize them. Phase 6 adds the second pillar:
 structured JSON logs, correlated by request ID and queryable in Loki.
+Phase 7 adds the third: distributed traces via OpenTelemetry, stored in
+Tempo — which is where all three pillars finally meet.
 
 ## Why RED, and why it's not the whole picture
 
@@ -278,6 +280,136 @@ so the **worker** — which has no HTTP surface and therefore no RED metrics —
 is still selectable for its CPU, memory and log panels. Selecting only the
 worker leaves the RED panels legitimately empty.
 
+## Distributed Tracing with OpenTelemetry & Tempo (Phase 7)
+
+Metrics say *something* is slow. Logs say *what happened*. Only a trace says
+*where the time went*, span by span, across process boundaries. This is the
+pillar that answers "which dependency is the bottleneck" without guessing.
+
+### Pipeline
+
+```mermaid
+flowchart LR
+    S[services<br/>OTel SDK] -->|OTLP http/protobuf| A[Alloy<br/>otelcol.receiver.otlp]
+    A -->|OTLP gRPC| T[(Tempo)]
+    T --> G[Grafana Explore]
+```
+
+Services export to **Alloy**, not directly to Tempo. That extra hop is
+deliberate: the application only ever knows about one local collector
+endpoint, so the backend behind it can be swapped, sampled, or fanned out
+without redeploying a single service. Alloy is already the log shipper, so
+this makes it the single telemetry agent for both pillars.
+
+Configuration is entirely environment-driven (`OTEL_SERVICE_NAME`,
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`), which is why
+`src/tracing.js` is byte-identical in all four services.
+
+### The ESM trap (the hard-won lesson of this phase)
+
+OpenTelemetry auto-instrumentation works by monkey-patching modules as they
+load. CommonJS makes that easy — everything goes through `require()`. **ESM
+does not**, and this project chose ESM back in Phase 2.
+
+The failure mode is nasty because it is *partial*. Probing with a script
+that used both `pg` and `http`:
+
+| | without loader hook | with loader hook |
+|---|---|---|
+| `pg` spans | ✅ present | ✅ present |
+| `http` spans | ❌ **missing** | ✅ present |
+
+Database spans appear, so tracing looks like it works — but HTTP is the
+transport that carries `traceparent` between services, so **every trace
+would silently stop at one service boundary**. You would get four
+disconnected single-service traces instead of one distributed trace, and
+nothing would error.
+
+The fix is a loader hook, registered inside `src/tracing.js`:
+
+```js
+import { register } from 'node:module';
+import { pathToFileURL } from 'node:url';
+register('@opentelemetry/instrumentation/hook.mjs', pathToFileURL('./'));
+```
+
+and starting the app with `node --import ./src/tracing.js src/index.js` so
+the SDK is running before any instrumented module loads.
+
+Note the hook is registered *in code* rather than by passing
+`--experimental-loader` on the command line. Both work, but the flag prints
+a three-line `ExperimentalWarning` to stderr — which would put non-JSON
+lines into the log stream Loki collects, undoing the "every line is
+structured" property established in Phase 6.
+
+### What a real trace looks like
+
+One `POST /api/orders` produces **49 spans across all four services**,
+matching the architecture diagram exactly:
+
+```text
+[gateway]       POST /api/orders
+  [gateway]       POST                          -> outbound proxy call
+    [order-service] POST /orders
+      [order-service] request handler - /orders
+        [order-service] redis-GET / redis-SET   -> cache-aside lookup
+        [order-service] GET                     -> call to user-service
+          [user-service]  GET /users/:id
+            [user-service]  pg.query:SELECT
+        [order-service] pg.query:INSERT
+        [order-service] publish <default>       -> RabbitMQ
+          [worker]        order.created process -> ACROSS THE QUEUE
+            [worker]        pg.query:UPDATE
+```
+
+The important line is the last block: the worker's span is a **child of the
+publish span**, in the same trace. OpenTelemetry's amqplib instrumentation
+injects `traceparent` into the message headers, so trace context survives
+the async hop — the same boundary the `requestId` crosses via AMQP's
+`correlationId` property in Phase 6. Two mechanisms, same boundary, for two
+different purposes.
+
+### Logs now carry traceId
+
+The pino `mixin` reads the active span, so every log line emitted inside a
+request carries `traceId` and `spanId` alongside `requestId`:
+
+```json
+{"level":"info","service":"order-service","requestId":"4da65e61-...",
+ "traceId":"4c998120f547feccdf4d96cddba25be3","spanId":"a1b2c3d4e5f6a7b8",
+ "message":"published order.created"}
+```
+
+Startup lines correctly have no `traceId` — they happen outside any request.
+Phase 8 wires the Grafana side (trace→logs and logs→trace links) on top of
+this.
+
+### A real bug this phase found, with real numbers
+
+The very first trace showed `POST /api/orders` taking **3290ms**, with a
+`tls.connect` span of 1071ms inside it. Measuring properly:
+
+| | first request after restart | subsequent requests |
+|---|---|---|
+| before fix | **3.40s** | 0.017-0.030s |
+| after fix | **0.055s** | 0.013-0.020s |
+
+Reproducible across restarts. The cause was ours, not CloudAMQP's:
+`connectQueue()` established the AMQP connection lazily *inside the first
+publish*, so the first user to place an order after any deploy paid the
+entire TLS + AMQP handshake in-band — a ~170x latency penalty on that one
+request.
+
+Fixed by warming the connection at startup (`warmQueueConnection()` in
+`services/order-service/src/queue.js`), deliberately non-blocking so the
+service still starts when the broker is unreachable.
+
+This is worth dwelling on: the metrics from Phase 4 would have shown a p99
+spike and told you nothing about why. The trace pointed straight at a TLS
+handshake sitting in the request path. It also matters for Phase 9 — one
+multi-second outlier per deploy would have quietly contaminated the SLO
+baseline this project is about to measure.
+
 ## Interview Questions This Phase Should Prepare You For
 
 1. "Why a Histogram instead of tracking min/max/avg latency?" — Histograms
@@ -331,3 +463,22 @@ worker leaves the RED panels legitimately empty.
     the current context on each call (pino's `mixin`). The alternative —
     threading a `requestId` parameter through every signature — is the
     thing that makes teams give up on correlation entirely.
+11. "Why do services export traces to a collector instead of straight to
+    the tracing backend?" — The app then knows only one local endpoint.
+    Sampling, batching, redaction, retries and swapping the backend all
+    become collector config rather than a code change and redeploy across
+    every service.
+12. "What breaks about OpenTelemetry auto-instrumentation under ESM?" —
+    Patching relies on intercepting module loading, which `require()` makes
+    trivial and ESM does not. Without a loader hook you get *partial*
+    instrumentation: database spans appear but HTTP ones don't, so traces
+    silently stop at each service boundary while still looking healthy.
+13. "Trace context and correlation IDs both cross the queue here — isn't
+    that redundant?" — No. `traceparent` gives the span tree (structure and
+    timing); the AMQP `correlationId` gives a stable filter key for logs
+    that can outlive a single trace, e.g. across retries that each produce
+    their own trace.
+14. "You see p99 latency spike after every deploy. How do you find it?" —
+    Exactly the case above: metrics show the spike, the trace shows a TLS
+    handshake inside the request path because a connection was established
+    lazily on first use. The fix is to warm the connection at startup.
