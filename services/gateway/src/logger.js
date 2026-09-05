@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import pino from 'pino';
-import { trace } from '@opentelemetry/api';
 
 const SERVICE_NAME = 'gateway';
 export const REQUEST_ID_HEADER = 'x-request-id';
@@ -42,21 +41,14 @@ export const logger = pino({
     level: (label) => ({ level: label }),
   },
   serializers: { err: serializeError },
+  // Only requestId is added here. trace_id/span_id/trace_flags are injected
+  // automatically by @opentelemetry/instrumentation-pino (part of the auto
+  // instrumentations enabled in tracing.js), using OpenTelemetry's own
+  // snake_case field names - duplicating them here produced two copies of
+  // the same value on every single log line.
   mixin() {
     const store = requestContext.getStore();
-    const fields = store?.requestId ? { requestId: store.requestId } : {};
-
-    // traceId/spanId come from the active OpenTelemetry span rather than from
-    // our own context, so every log line can be pivoted straight to the trace
-    // that produced it (and back again) - see docs/observability.md on
-    // correlation IDs vs trace IDs.
-    const span = trace.getActiveSpan();
-    if (span) {
-      const spanContext = span.spanContext();
-      fields.traceId = spanContext.traceId;
-      fields.spanId = spanContext.spanId;
-    }
-    return fields;
+    return store?.requestId ? { requestId: store.requestId } : {};
   },
 });
 
