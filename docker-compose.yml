@@ -12,6 +12,10 @@ x-otel-env: &otel-env
 services:
   postgres:
     image: postgres:16-alpine
+    # Without this the datastores stay down after a Docker restart while the
+    # app services (which do have a restart policy) come back up - leaving a
+    # half-alive stack that looks running but fails every request.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-pulseops}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pulseops}
@@ -29,6 +33,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
