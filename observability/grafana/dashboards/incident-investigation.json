@@ -1,0 +1,193 @@
+{
+  "uid": "pulseops-incident-investigation",
+  "title": "PulseOps / Incident Investigation",
+  "tags": ["pulseops", "incident"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "description": "The dashboard to open when an alert fires. Laid out top-to-bottom as the actual investigation path: is something wrong (error rate) -> is it slow (latency) -> which service -> which dependency -> what do the logs say -> click through to the trace.",
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(process_cpu_seconds_total, service)", "refId": "service" },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Service Up/Down",
+      "description": "Prometheus scrape health. A service that stopped being scraped is either down or unreachable - check this before reading anything else, because every panel below goes blank for a service that isn't reporting.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{service=~\"$service\"}",
+          "legendFormat": "{{service}}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Error Rate",
+      "description": "The primary 'is this a real incident' signal - share of requests returning 5xx. Client errors (4xx) are deliberately excluded: they are the caller's fault and must not look like an outage.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 6, "y": 0, "w": 9, "h": 5 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(sum(rate(http_requests_total{service=~\"$service\",status_code=~\"5..\"}[5m])) by (service) or sum(rate(http_requests_total{service=~\"$service\"}[5m])) by (service) * 0) / sum(rate(http_requests_total{service=~\"$service\"}[5m])) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latency p95 / p99",
+      "description": "Where user-visible slowness shows up. A p99 that moves while p95 stays flat means a subset of requests is affected - usually one dependency or one code path, which the traces below will identify.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 15, "y": 0, "w": 9, "h": 5 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=~\"$service\"}[5m])) by (le, service))",
+          "legendFormat": "{{service}} p95"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{service=~\"$service\"}[5m])) by (le, service))",
+          "legendFormat": "{{service}} p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Dependency Health — failures/sec",
+      "description": "Narrows 'the service is unhealthy' to 'this dependency is unhealthy'. Postgres query failures, Redis errors, and failed RabbitMQ publishes side by side - whichever is non-zero is where to look.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(db_queries_failed_total{service=~\"$service\"}[5m])) by (service)",
+          "legendFormat": "postgres failures - {{service}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(cache_errors_total[5m]))",
+          "legendFormat": "redis errors"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(queue_messages_published_total{status=\"error\"}[5m]))",
+          "legendFormat": "rabbitmq publish failures"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(dependency_requests_total{status=\"error\"}[5m])) by (dependency)",
+          "legendFormat": "downstream call failures - {{dependency}}"
+        },
+        {
+          "refId": "E",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(queue_messages_consumed_total{status=\"failed\"}[5m]))",
+          "legendFormat": "worker processing failures"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Dependency Latency p95",
+      "description": "The other half of dependency health: not failing, but slow. A Postgres or Redis p95 that tracks the service p95 above is the bottleneck.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 5, "w": 12, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(db_query_duration_seconds_bucket{service=~\"$service\"}[5m])) by (le, service))",
+          "legendFormat": "postgres - {{service}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(cache_operation_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "redis"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(dependency_request_duration_seconds_bucket[5m])) by (le, dependency))",
+          "legendFormat": "downstream - {{dependency}}"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(queue_message_processing_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "worker message processing"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Errors & Warnings — click TraceID to open the trace",
+      "description": "The pivot point of the whole dashboard. Expand any line and click the 'View trace' link on its TraceID field to jump straight into that request's distributed trace in Tempo - no copy-pasting IDs between tabs. Each line also carries a requestId, which follows one logical user action across every service including the RabbitMQ hop.",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 12 },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"pulseops\", service=~\"$service\", level=~\"warn|error\"}",
+          "queryType": "range"
+        }
+      ]
+    }
+  ]
+}

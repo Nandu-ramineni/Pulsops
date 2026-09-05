@@ -1,11 +1,12 @@
-# Observability — Metrics, Logs & Traces (Phases 4-7)
+# Observability — Metrics, Logs & Traces (Phases 4-8)
 
 Phase 4 instruments every service with Prometheus-format metrics via
 `prom-client`, exposed on `/metrics`. Phase 5 stands up Prometheus to scrape
 them and Grafana to visualize them. Phase 6 adds the second pillar:
 structured JSON logs, correlated by request ID and queryable in Loki.
 Phase 7 adds the third: distributed traces via OpenTelemetry, stored in
-Tempo — which is where all three pillars finally meet.
+Tempo. Phase 8 wires them to each other, so an investigation is a sequence
+of clicks rather than copy-pasting IDs between browser tabs.
 
 ## Why RED, and why it's not the whole picture
 
@@ -410,6 +411,93 @@ handshake sitting in the request path. It also matters for Phase 9 — one
 multi-second outlier per deploy would have quietly contaminated the SLO
 baseline this project is about to measure.
 
+## Correlating the Three Pillars (Phase 8)
+
+Phases 4-7 produced three signals that happened to sit side by side in one
+Grafana. Having them installed is not the same as having them connected:
+if finding the trace behind an error still means copying a hex string into
+another tab, nobody does it at 3am. This phase makes the pivots clickable.
+
+```mermaid
+flowchart LR
+    M[Prometheus<br/>metric anomaly] --> D[Incident dashboard]
+    D --> L[Loki<br/>error logs]
+    L -->|derived field<br/>click TraceID| T[Tempo<br/>distributed trace]
+    T -->|tracesToLogs<br/>filtered by traceId| L
+    T -->|tracesToMetrics| M
+```
+
+### What is wired to what
+
+| Pivot | Mechanism | Where configured |
+|---|---|---|
+| log line → its trace | Loki **derived field** matching the `trace_id` structured-metadata field | `datasource.yml`, Loki `jsonData.derivedFields` |
+| span → its log lines | Tempo **tracesToLogsV2**, `filterByTraceID: true` so you land on that request's lines, not the whole service stream | Tempo `jsonData.tracesToLogsV2` |
+| span → service RED metrics | Tempo **tracesToMetrics** with request rate, error rate and p95 queries | Tempo `jsonData.tracesToMetrics` |
+
+`trace_id` is attached as **structured metadata** by Alloy, exactly like
+`requestId` — never as a label. The derived field uses
+`matcherType: label` to read that metadata rather than regex-scraping the
+raw log body, so it keeps working if the JSON field order or formatting
+changes.
+
+### Dashboard 4 — Incident Investigation
+
+The last of the four dashboards in the project spec, deferred since Phase 5
+because it needs logs and traces to exist. It is laid out top-to-bottom as
+the actual investigation path:
+
+1. **Service Up/Down** — check this first; every panel below is blank for a
+   service that stopped reporting, which looks like "no errors".
+2. **Error Rate** (5xx only) and **Latency p95/p99** — is this real, and is
+   it failing or just slow.
+3. **Dependency Health** and **Dependency Latency** — narrows "the service
+   is unhealthy" to "this dependency is unhealthy", covering Postgres,
+   Redis, RabbitMQ publish, downstream calls and worker processing.
+4. **Errors & Warnings** — the pivot point: expand a line, click its
+   TraceID, land in the trace.
+
+The spec also lists "recent deployments" for this dashboard. There is no
+deployment tracking in this project yet, so that panel is deliberately
+absent rather than faked — annotations from a deploy pipeline would be the
+honest way to add it.
+
+### Two bugs found while verifying this phase
+
+**1. A link that looked like it worked and didn't.** The derived field was
+first written as:
+
+```yaml
+url: "${__value.raw}"
+```
+
+Grafana's *provisioning* layer interpolates `${...}` as an environment
+variable before the datasource ever sees it, so this silently became an
+empty string. The result was the worst kind of broken: the "View trace"
+link still rendered, still navigated to Tempo, and arrived with
+`"query":""` and **No data**. Nothing errored. The fix is to escape the
+dollar so provisioning leaves it alone:
+
+```yaml
+url: "$${__value.raw}"
+```
+
+**2. Every log line carried the trace ID twice.** Phase 7 added
+`traceId`/`spanId` via a pino `mixin`, but
+`@opentelemetry/instrumentation-pino` (already enabled by the auto
+instrumentations) was independently injecting `trace_id`, `span_id` and
+`trace_flags`. Checking real log output showed both sets present on exactly
+the same lines. The manual mixin was removed and the OpenTelemetry
+snake_case names kept, since they are the semantic-convention names other
+tooling expects.
+
+### Operational note
+
+**Alloy does not hot-reload its config file.** Editing
+`observability/alloy/config.alloy` has no effect until
+`docker compose restart alloy`. This cost real debugging time when
+`trace_id` did not appear in structured metadata despite correct config.
+
 ## Interview Questions This Phase Should Prepare You For
 
 1. "Why a Histogram instead of tracking min/max/avg latency?" — Histograms
@@ -482,3 +570,14 @@ baseline this project is about to measure.
     Exactly the case above: metrics show the spike, the trace shows a TLS
     handshake inside the request path because a connection was established
     lazily on first use. The fix is to warm the connection at startup.
+15. "You have metrics, logs and traces. What's still missing?" — The links
+    between them. Three tools that each require copy-pasting an ID into
+    the next one is three tools nobody correlates under pressure. The
+    measure of an observability stack is how few manual steps separate
+    "something is wrong" from "here is the span that failed".
+16. "How would you connect a log line to its trace?" — Emit the trace ID on
+    every log line (via the logging library's OpenTelemetry integration,
+    not by hand), ship it as high-cardinality *metadata* rather than an
+    index label, and configure a derived field in the log datasource that
+    turns it into a link. All three parts are required; the first two
+    without the third just means the ID is technically present.

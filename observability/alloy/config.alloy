@@ -44,10 +44,13 @@ loki.process "app_logs" {
   // Parse the JSON pino emits. Infrastructure containers (postgres, redis,
   // rabbitmq) log plain text; this stage simply extracts nothing for them
   // and their lines still arrive intact.
+  // trace_id is OpenTelemetry's own field name, injected automatically by
+  // @opentelemetry/instrumentation-pino - not something the app writes itself.
   stage.json {
     expressions = {
       level     = "level",
       requestId = "requestId",
+      trace_id  = "trace_id",
     }
   }
 
@@ -59,13 +62,17 @@ loki.process "app_logs" {
     }
   }
 
-  // requestId is unbounded (one value per request). Making it a label would
-  // create a new Loki stream per request and destroy the index - structured
-  // metadata is purpose-built for exactly this kind of high-cardinality
-  // correlation field.
+  // requestId and traceId are both unbounded (one value per request/trace).
+  // Making either a label would create a new Loki stream per request and
+  // destroy the index - structured metadata is purpose-built for exactly this
+  // kind of high-cardinality correlation field.
+  //
+  // trace_id in particular is what Grafana's Loki derived field matches on to
+  // turn every log line into a one-click jump to its distributed trace.
   stage.structured_metadata {
     values = {
       requestId = "requestId",
+      trace_id  = "trace_id",
     }
   }
 

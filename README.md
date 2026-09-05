@@ -26,7 +26,7 @@ for the full design rationale.
 | 5 | Prometheus & Grafana | ✅ done |
 | 6 | Structured Logging & Loki | ✅ done |
 | 7 | OpenTelemetry & Tempo | ✅ done |
-| 8 | Correlating Metrics/Logs/Traces | ⬜ not started |
+| 8 | Correlating Metrics/Logs/Traces | ✅ done |
 | 9 | SLI/SLO Design | ⬜ not started |
 | 10 | Error Budgets & Burn Rates | ⬜ not started |
 | 11 | Prometheus Alert Rules | ⬜ not started |
@@ -96,10 +96,13 @@ curl http://localhost:7000/api/orders/1
 
 Other useful endpoints while it's running:
 - **Grafana: http://localhost:3000** (admin/admin, or browse anonymously) —
-  two dashboards auto-provisioned: **Service Overview** and
-  **Dependencies**. See [docs/observability.md](docs/observability.md) for
-  what each panel means, the RED method, and why two dashboards from the
-  original spec are deliberately deferred to later phases.
+  three dashboards auto-provisioned: **Service Overview**, **Dependencies**
+  and **Incident Investigation**. Open Incident Investigation, expand any
+  line in the *Errors & Warnings* panel, and click its **TraceID → View
+  trace** to jump straight into that request's distributed trace. From a
+  span you can jump back to the same request's logs, or out to that
+  service's RED metrics. See [docs/observability.md](docs/observability.md)
+  for how the three pillars are wired together.
 - Prometheus: http://localhost:9200 — raw metrics/query UI and scrape
   target health (`/targets`).
 - Loki: http://localhost:3100 — query logs from Grafana's **Explore** tab

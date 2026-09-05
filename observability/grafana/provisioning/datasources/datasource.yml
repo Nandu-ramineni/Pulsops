@@ -1,5 +1,13 @@
 apiVersion: 1
 
+# Phase 8 - the three pillars are wired to each other here, not just added
+# side by side. The goal is that an engineer mid-incident never has to
+# copy-paste an ID between tabs:
+#
+#   metric anomaly -> service dashboard -> error logs -> [click] -> trace
+#                                              ^                     |
+#                                              +---- [click] --------+
+#
 datasources:
   - name: Prometheus
     type: prometheus
@@ -8,6 +16,8 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: false
+    jsonData:
+      httpMethod: POST
 
   - name: Loki
     type: loki
@@ -15,6 +25,23 @@ datasources:
     access: proxy
     url: http://loki:3100
     editable: false
+    jsonData:
+      # Turns the traceId on every log line into a clickable link straight to
+      # the trace in Tempo. matcherType "label" reads the structured metadata
+      # Alloy attaches, rather than regex-scraping the raw log body - so this
+      # keeps working even if the JSON field order or formatting changes.
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          # $$ escapes the $ so Grafana's provisioning does NOT treat this as
+          # an environment variable. Written as ${__value.raw} it silently
+          # expands to an empty string: the "View trace" link still renders
+          # and still navigates to Tempo, but arrives with an empty query and
+          # "No data" - a link that looks like it works and does not.
+          url: "$${__value.raw}"
+          urlDisplayLabel: View trace
 
   - name: Tempo
     type: tempo
@@ -22,3 +49,37 @@ datasources:
     access: proxy
     url: http://tempo:3200
     editable: false
+    jsonData:
+      # The return journey: from a span back to the log lines it produced.
+      # filterByTraceID scopes the Loki query to this trace, so you land on
+      # the handful of relevant lines rather than the whole service's stream.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+        filterBySpanID: false
+        tags:
+          - key: service.name
+            value: service
+
+      # And from a span to that service's RED metrics, so "this span was slow"
+      # can immediately be checked against "is the whole service slow, or just
+      # this request?"
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        tags:
+          - key: service.name
+            value: service
+        queries:
+          - name: Request rate
+            query: sum(rate(http_requests_total{$__tags}[5m]))
+          - name: Error rate
+            query: sum(rate(http_requests_total{$__tags,status_code=~"5.."}[5m]))
+          - name: p95 latency
+            query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{$__tags}[5m])) by (le))
+
+      nodeGraph:
+        enabled: true
