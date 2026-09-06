@@ -27,7 +27,7 @@ for the full design rationale.
 | 6 | Structured Logging & Loki | ✅ done |
 | 7 | OpenTelemetry & Tempo | ✅ done |
 | 8 | Correlating Metrics/Logs/Traces | ✅ done |
-| 9 | SLI/SLO Design | ⬜ not started |
+| 9 | SLI/SLO Design | ✅ done |
 | 10 | Error Budgets & Burn Rates | ⬜ not started |
 | 11 | Prometheus Alert Rules | ⬜ not started |
 | 12 | Alertmanager | ⬜ not started |
@@ -54,6 +54,24 @@ flowchart TD
 
 Full rationale, request-path tracing walkthrough, and technology decisions are in
 [docs/architecture.md](docs/architecture.md).
+
+## Service Level Objectives
+
+Measured at the gateway, because that is the boundary a user experiences.
+
+| SLO | Target | Measured baseline |
+|---|---|---|
+| Availability (non-5xx / total) | **99.5%** over 30d | 100% observed (zero 5xx) |
+| Latency (requests under 250ms) | **99%** over 30d | 99.72% steady state |
+
+Both targets are derived from measurements against this stack, not copied
+from a reference architecture — including the reasoning for why availability
+is set at 99.5% rather than the customary 99.9% (short observation window,
+no redundancy anywhere). 4xx is deliberately excluded from the availability
+failure set so a misbehaving client cannot burn the error budget.
+
+See [docs/slos.md](docs/slos.md) for the full baseline data, the derivation
+of every number, and the known threats to each target.
 
 ## Repository Structure
 

@@ -1,0 +1,159 @@
+# PulseOps SLI recording rules (Phase 9)
+#
+# Every SLI here is measured AT THE GATEWAY, because that is the boundary a
+# user actually experiences. Measuring inside order-service would miss
+# gateway failures, proxy overhead, and anything that breaks before the
+# request reaches a backend.
+#
+# Targets live here as recording rules rather than being hard-coded into
+# dashboards and alerts, so there is exactly one place to change them and
+# everything downstream stays consistent. The reasoning behind each number
+# is in docs/slos.md - they are derived from measured baseline behaviour,
+# not copied from a blog post.
+
+groups:
+  - name: pulseops_slo_targets
+    interval: 30s
+    rules:
+      # 99.5% of requests succeed. Chosen deliberately below the measured
+      # 100% because the observation window is short and nothing in this
+      # architecture is redundant. See docs/slos.md.
+      - record: slo:availability:target
+        expr: 0.995
+
+      # 99% of requests complete within the latency threshold below.
+      - record: slo:latency:target
+        expr: 0.99
+
+      # 250ms. Roughly 6x the measured p99 (~40ms), so the SLO does not need
+      # redefining the moment traffic grows.
+      - record: slo:latency:threshold_seconds
+        expr: 0.25
+
+  # ---------------------------------------------------------------------
+  # Availability SLI: proportion of requests that did not fail on our side.
+  #
+  # 4xx is deliberately excluded from the numerator's failure set: a client
+  # sending a malformed body or asking for a row that does not exist is not
+  # an outage, and counting it as one would let callers burn our error
+  # budget. This is the same reasoning behind the 400-vs-500 fix earlier in
+  # the project.
+  # ---------------------------------------------------------------------
+  - name: pulseops_sli_availability
+    interval: 30s
+    rules:
+      - record: sli:availability:ratio_rate5m
+        expr: |
+          sum(rate(http_requests_total{service="gateway",status_code!~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total{service="gateway"}[5m]))
+
+      - record: sli:availability:ratio_rate30m
+        expr: |
+          sum(rate(http_requests_total{service="gateway",status_code!~"5.."}[30m]))
+          /
+          sum(rate(http_requests_total{service="gateway"}[30m]))
+
+      - record: sli:availability:ratio_rate1h
+        expr: |
+          sum(rate(http_requests_total{service="gateway",status_code!~"5.."}[1h]))
+          /
+          sum(rate(http_requests_total{service="gateway"}[1h]))
+
+      - record: sli:availability:ratio_rate6h
+        expr: |
+          sum(rate(http_requests_total{service="gateway",status_code!~"5.."}[6h]))
+          /
+          sum(rate(http_requests_total{service="gateway"}[6h]))
+
+      - record: sli:availability:ratio_rate1d
+        expr: |
+          sum(rate(http_requests_total{service="gateway",status_code!~"5.."}[1d]))
+          /
+          sum(rate(http_requests_total{service="gateway"}[1d]))
+
+  # ---------------------------------------------------------------------
+  # Latency SLI: proportion of requests served faster than the threshold.
+  #
+  # Expressed as a proportion rather than "p95 < 250ms" on purpose.
+  # Percentiles cannot be averaged or summed across windows, so a
+  # percentile-based SLO does not compose into an error budget. A ratio of
+  # good events to total events does, which is what makes the multi-window
+  # burn-rate alerting in Phase 10 possible.
+  #
+  # The le="0.25" label must match a histogram bucket boundary exactly -
+  # there is no interpolation here, which is precisely why the threshold was
+  # chosen from the existing buckets rather than the other way round.
+  # ---------------------------------------------------------------------
+  - name: pulseops_sli_latency
+    interval: 30s
+    rules:
+      - record: sli:latency:ratio_rate5m
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{service="gateway",le="0.25"}[5m]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="gateway"}[5m]))
+
+      - record: sli:latency:ratio_rate30m
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{service="gateway",le="0.25"}[30m]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="gateway"}[30m]))
+
+      - record: sli:latency:ratio_rate1h
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{service="gateway",le="0.25"}[1h]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="gateway"}[1h]))
+
+      - record: sli:latency:ratio_rate6h
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{service="gateway",le="0.25"}[6h]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="gateway"}[6h]))
+
+      - record: sli:latency:ratio_rate1d
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{service="gateway",le="0.25"}[1d]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="gateway"}[1d]))
+
+  # ---------------------------------------------------------------------
+  # Per-journey latency, recorded but NOT given its own SLO target yet.
+  #
+  # Reads and writes are measurably different journeys (see docs/slos.md):
+  # reads sit around 25ms at p99 with no slow tail at all, while order
+  # creation carries occasional multi-second outliers when the AMQP
+  # connection has to be re-established mid-request. Recording them
+  # separately means the single combined SLO above can be split later
+  # without waiting to accumulate history.
+  # ---------------------------------------------------------------------
+  - name: pulseops_sli_latency_by_journey
+    interval: 30s
+    rules:
+      - record: sli:latency_read:ratio_rate5m
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{service="gateway",method="GET",le="0.25"}[5m]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="gateway",method="GET"}[5m]))
+
+      - record: sli:latency_write:ratio_rate5m
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{service="gateway",method="POST",le="0.25"}[5m]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="gateway",method="POST"}[5m]))
+
+  # ---------------------------------------------------------------------
+  # Throughput is recorded as context, not as an SLO.
+  #
+  # Throughput is demand, not reliability - it is not something the service
+  # promises. It matters here for two reasons: it tells you whether an SLI
+  # is statistically meaningful (a 100% success ratio over three requests
+  # means nothing), and a sudden drop is itself a symptom worth seeing next
+  # to the ratios above.
+  # ---------------------------------------------------------------------
+  - name: pulseops_throughput
+    interval: 30s
+    rules:
+      - record: traffic:requests:rate5m
+        expr: sum(rate(http_requests_total{service="gateway"}[5m]))
