@@ -28,7 +28,7 @@ for the full design rationale.
 | 7 | OpenTelemetry & Tempo | ✅ done |
 | 8 | Correlating Metrics/Logs/Traces | ✅ done |
 | 9 | SLI/SLO Design | ✅ done |
-| 10 | Error Budgets & Burn Rates | ⬜ not started |
+| 10 | Error Budgets & Burn Rates | ✅ done |
 | 11 | Prometheus Alert Rules | ⬜ not started |
 | 12 | Alertmanager | ⬜ not started |
 | 13 | Incident Response Framework | ⬜ not started |
@@ -70,8 +70,19 @@ is set at 99.5% rather than the customary 99.9% (short observation window,
 no redundancy anywhere). 4xx is deliberately excluded from the availability
 failure set so a misbehaving client cannot burn the error budget.
 
+Each SLO has an **error budget** (the allowed failure) and a **burn rate**
+(how fast it is being spent, normalised so 1 = the budget lasts exactly one
+30-day window). The **Executive Reliability Overview** dashboard shows SLO
+status, budget remaining, and multi-window burn rates.
+
+The budget rules were validated by deliberately stopping `user-service`
+under load: the availability SLI fell to 0.9826, burn rate rose to 3.48
+(`(1−0.9826)/0.005` — exact), and that one incident pushed the availability
+budget to **−3.28%**, overspent.
+
 See [docs/slos.md](docs/slos.md) for the full baseline data, the derivation
-of every number, and the known threats to each target.
+of every number, the error budget policy (what actually happens at 0%), and
+the known threats to each target.
 
 ## Repository Structure
 

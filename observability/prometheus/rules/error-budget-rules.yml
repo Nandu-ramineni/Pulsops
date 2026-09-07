@@ -1,0 +1,147 @@
+# PulseOps error budget and burn rate rules (Phase 10)
+#
+# The error budget is the inverse of the SLO: if the target is 99.5%, then
+# 0.5% of requests are ALLOWED to fail. That allowance is not slack to be
+# apologised for - it is what makes shipping possible. A team with no error
+# budget can only protect reliability by never changing anything.
+#
+#   error budget          = 1 - SLO target
+#   budget consumed ratio = (1 - SLI) / (1 - SLO target)
+#   burn rate             = same expression, over a shorter window
+#
+# Burn rate is the *speed* of consumption, normalised so that:
+#   burn rate 1  = the budget lasts exactly one SLO window (30 days)
+#   burn rate 2  = exhausted in 15 days
+#   burn rate 14.4 = exhausted in ~50 hours (2% of budget in one hour)
+#
+# scalar() is used on the target rather than plain vector division because
+# the target series and the SLI series carry different label sets; scalar()
+# sidesteps vector matching entirely and cannot silently produce no result.
+
+groups:
+  # ---------------------------------------------------------------------
+  # The SLO window itself. 30 days is the stated promise.
+  #
+  # These range over 30d and are therefore expensive, so this group runs on
+  # a much slower interval than the burn-rate group below - a budget figure
+  # does not need refreshing every 30 seconds.
+  #
+  # NOTE ON DATA COMPLETENESS: these evaluate over whatever history exists.
+  # Until Prometheus has 30 days of retention behind it, "30-day budget" is
+  # really "budget over all available data". The ratio stays meaningful (it
+  # is over observed traffic); the absolute request counts do not represent
+  # a true 30-day month. This is called out on the dashboard rather than
+  # quietly presented as fact.
+  # ---------------------------------------------------------------------
+  # interval MUST stay below Prometheus's query lookback-delta (5m by
+  # default). Evaluating every 5m produces samples exactly 5m apart, which
+  # sits right on that boundary: instant queries then intermittently return
+  # "no data" even though the rule is healthy, and dashboard panels flicker
+  # between a value and empty. 1m is still far cheaper than the 30s used for
+  # the short-window rules, while staying comfortably inside the lookback.
+  #
+  # Cost note: rate(...[30d]) is genuinely expensive at scale. The usual
+  # production answer is to record a cheap short-window ratio and aggregate
+  # that, accepting that an average of ratios is not identical to a ratio of
+  # sums. At this project's data volume the direct 30d range is honest and
+  # affordable, so it is used as-is.
+  - name: pulseops_slo_window
+    interval: 1m
+    rules:
+      - record: sli:availability:ratio_rate30d
+        expr: |
+          sum(rate(http_requests_total{service="gateway",status_code!~"5.."}[30d]))
+          /
+          sum(rate(http_requests_total{service="gateway"}[30d]))
+
+      - record: sli:latency:ratio_rate30d
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{service="gateway",le="0.25"}[30d]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="gateway"}[30d]))
+
+  # ---------------------------------------------------------------------
+  # Error budget consumption over the SLO window.
+  # ---------------------------------------------------------------------
+  - name: pulseops_error_budget
+    interval: 1m
+    rules:
+      - record: slo:availability:error_budget_consumed_ratio
+        expr: |
+          clamp_min(
+            (1 - sli:availability:ratio_rate30d) / scalar(1 - slo:availability:target),
+            0
+          )
+
+      # Deliberately NOT clamped at 0. A negative value means the budget is
+      # overspent, which is information you want on the dashboard rather
+      # than a flat zero that hides how far past the line you are.
+      - record: slo:availability:error_budget_remaining_ratio
+        expr: 1 - slo:availability:error_budget_consumed_ratio
+
+      - record: slo:latency:error_budget_consumed_ratio
+        expr: |
+          clamp_min(
+            (1 - sli:latency:ratio_rate30d) / scalar(1 - slo:latency:target),
+            0
+          )
+
+      - record: slo:latency:error_budget_remaining_ratio
+        expr: 1 - slo:latency:error_budget_consumed_ratio
+
+      # Budget expressed in actual failed requests rather than "minutes of
+      # downtime". With a request-based SLI the budget IS a number of bad
+      # requests; converting it to minutes assumes traffic is uniform, which
+      # it never is. These two are the honest version of the same idea.
+      - record: slo:availability:bad_requests_observed
+        expr: |
+          sum(increase(http_requests_total{service="gateway",status_code=~"5.."}[30d]))
+          or vector(0)
+
+      - record: slo:availability:bad_requests_allowed
+        expr: |
+          sum(increase(http_requests_total{service="gateway"}[30d]))
+          * scalar(1 - slo:availability:target)
+
+  # ---------------------------------------------------------------------
+  # Burn rates across multiple windows.
+  #
+  # Multiple windows exist because a single one cannot be both fast to
+  # detect and resistant to false alarms. A 5m window reacts quickly but
+  # fires on any brief blip; a 6h window is stable but would let a severe
+  # outage run for hours before alerting. Phase 11 pairs a long window
+  # (has something bad happened?) with a short one (is it STILL happening?)
+  # so an alert requires both.
+  # ---------------------------------------------------------------------
+  - name: pulseops_burn_rate
+    interval: 30s
+    rules:
+      - record: slo:availability:burn_rate5m
+        expr: (1 - sli:availability:ratio_rate5m) / scalar(1 - slo:availability:target)
+
+      - record: slo:availability:burn_rate30m
+        expr: (1 - sli:availability:ratio_rate30m) / scalar(1 - slo:availability:target)
+
+      - record: slo:availability:burn_rate1h
+        expr: (1 - sli:availability:ratio_rate1h) / scalar(1 - slo:availability:target)
+
+      - record: slo:availability:burn_rate6h
+        expr: (1 - sli:availability:ratio_rate6h) / scalar(1 - slo:availability:target)
+
+      - record: slo:availability:burn_rate1d
+        expr: (1 - sli:availability:ratio_rate1d) / scalar(1 - slo:availability:target)
+
+      - record: slo:latency:burn_rate5m
+        expr: (1 - sli:latency:ratio_rate5m) / scalar(1 - slo:latency:target)
+
+      - record: slo:latency:burn_rate30m
+        expr: (1 - sli:latency:ratio_rate30m) / scalar(1 - slo:latency:target)
+
+      - record: slo:latency:burn_rate1h
+        expr: (1 - sli:latency:ratio_rate1h) / scalar(1 - slo:latency:target)
+
+      - record: slo:latency:burn_rate6h
+        expr: (1 - sli:latency:ratio_rate6h) / scalar(1 - slo:latency:target)
+
+      - record: slo:latency:burn_rate1d
+        expr: (1 - sli:latency:ratio_rate1d) / scalar(1 - slo:latency:target)

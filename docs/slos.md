@@ -1,4 +1,4 @@
-# SLIs, SLOs and Why These Numbers (Phase 9)
+# SLIs, SLOs, Error Budgets and Burn Rates (Phases 9-10)
 
 Every target in this document is derived from measurements taken against
 this stack. Nothing here is copied from a reference architecture. Where a
@@ -180,20 +180,172 @@ that distortion is currently small; if the mix shifts materially, split them.
 | Single Postgres | Total outage if it fails | Accepted for this project's scope |
 | Broker-native queue depth unobservable | Backlog can grow unseen | Known gap since the move to CloudAMQP |
 
-## What Phase 10 does with this
+---
 
-The SLIs above are ratios of good events to valid events, which is exactly
-the shape an error budget needs:
+# Error Budgets and Burn Rates (Phase 10)
+
+## What an error budget is, and why it exists
+
+An SLO of 99.5% is also a statement that **0.5% of requests are allowed to
+fail**. That allowance is the error budget.
+
+The reason it exists is not permissiveness, it is negotiation. Reliability
+and change velocity are in direct tension: the only perfectly reliable
+system is one nobody touches. Without an agreed budget, that tension gets
+resolved by whoever argues hardest — product pushes to ship, ops pushes to
+freeze, and the decision is political.
+
+An error budget replaces the argument with arithmetic. Below budget, the
+team has *earned* the right to take risks: ship faster, run experiments,
+tolerate a rough edge. Over budget, that right is spent and reliability work
+takes priority. Nobody has to win a debate.
+
+It also reframes what an incident costs. "We had a blip on Tuesday" becomes
+"that blip consumed 40% of the month's allowance", which is a number a
+product manager and an engineer can reason about together.
+
+## The arithmetic
 
 ```text
-error budget = 1 - SLO target
-budget consumed = (1 - SLI) / (1 - SLO target)
+error budget          = 1 - SLO target
+budget consumed ratio = (1 - SLI) / (1 - SLO target)
+budget remaining      = 1 - budget consumed
 ```
 
-Phase 10 turns these into error budget and burn-rate calculations, and the
-Executive Reliability Overview dashboard. Phase 11 turns burn rate into
-alerts that fire on *budget consumption speed* rather than on raw error
-rate.
+At a 99.5% target the budget is 0.005. If the measured SLI is 99.4%, then
+`(1 - 0.994) / 0.005 = 1.2` — 120% consumed, i.e. 20% overspent.
+
+**Budget remaining is deliberately not clamped at zero.** A flat 0 hides how
+far past the line you are; −20% is the number that should stop a risky
+deploy. The dashboard gauge extends below zero for exactly this reason.
+
+### Why the budget is counted in requests, not minutes
+
+With a request-based SLI, the budget *is* a number of failed requests:
+
+```text
+allowed failures = total requests in window x (1 - SLO target)
+```
+
+"43 minutes of downtime per month" is the familiar phrasing, but it only
+holds if traffic is uniform. Ten minutes of failure during peak costs far
+more budget than ten minutes at 3am, and a request-based budget captures
+that automatically. The dashboard therefore shows failed-vs-allowed
+requests, with the minutes framing avoided rather than approximated.
+
+## Burn rate: the speed of spending
+
+Budget remaining tells you where you are. Burn rate tells you how fast you
+are moving, and it is the number worth alerting on.
+
+```text
+burn rate = (1 - SLI over window) / (1 - SLO target)
+```
+
+It is normalised so that **burn rate 1 means the budget lasts exactly one
+SLO window**. Higher means faster:
+
+| Burn rate | Budget gone in | Meaning |
+|---|---|---|
+| 1 | 30 days | Spending exactly as planned |
+| 2 | 15 days | Twice as fast as sustainable |
+| 6 | 5 days | 5% of budget in 6 hours |
+| 14.4 | ~50 hours | 2% of budget in 1 hour |
+
+The 14.4 and 6 figures are the standard page-worthy thresholds, and they are
+not arbitrary: 14.4 is chosen so that one hour of burning consumes 2% of a
+30-day budget, and 6 so that six hours consumes 5%.
+
+### Why multiple windows
+
+No single window works. A 5-minute window detects a severe outage almost
+immediately but fires on every transient blip. A 6-hour window is stable but
+would let a total outage run for hours before saying anything.
+
+The standard answer, which Phase 11 implements, is to require a **long
+window and a short window to agree**: the long window answers "has enough
+budget been burned to matter?", and the short window answers "is it *still*
+burning right now?". Requiring both means an alert fires on real sustained
+problems and resolves promptly once the problem stops, rather than
+smouldering for hours after recovery.
+
+That is why `slo:*:burn_rate5m` through `burn_rate1d` are all recorded here
+even though nothing consumes them yet.
+
+## What happens when the budget is exhausted
+
+A budget with no consequence is decoration. The policy for this project:
+
+| Budget remaining | Posture |
+|---|---|
+| > 50% | Normal. Ship freely, take reasonable risks. |
+| 25-50% | Caution. Deploys continue; risky changes get a second pair of eyes. |
+| 0-25% | Slow down. Feature work continues but reliability fixes jump the queue. |
+| **< 0%** | **Feature freeze.** Only reliability fixes, critical security patches, and rollbacks ship until the budget recovers. |
+
+The freeze is not a punishment; it is the mechanism that stops a team from
+borrowing indefinitely against future reliability. Note that it also has an
+expiry: because the SLI is a trailing 30-day window, a bad month ages out on
+its own, and the budget recovers without anybody granting an exception.
+
+If the budget is repeatedly exhausted, the honest conclusion is usually that
+the SLO is wrong or the architecture cannot support it — not that the team
+needs to try harder. In this project's case, the single-instance
+architecture is a known constraint (see the threats table above).
+
+## Demonstrated, not just calculated
+
+The rules were validated by deliberately breaking the system rather than
+trusting the arithmetic. `user-service` was stopped while traffic continued,
+so the gateway returned 502s on user reads and 500s on order creates that
+missed cache:
+
+| | before | during outage | after recovery |
+|---|---|---|---|
+| Availability SLI (5m) | 1.0000 | **0.9826** | recovering |
+| Availability burn rate (5m) | 0.0000 | **3.4775** | elevated |
+
+The burn rate math checks exactly: `(1 - 0.9826) / 0.005 = 3.48`. At that
+speed the 30-day budget would be gone in roughly 8.6 days.
+
+That single injected incident was enough to push the availability budget
+negative:
+
+```text
+availability SLI (30d window)  0.9948   -> below the 0.995 target
+error budget remaining        -3.28%    -> overspent
+failed requests                   51
+failed requests allowed         49.6
+```
+
+The Executive dashboard correspondingly shows **availability MISSING** and
+**latency MET** (99.25% against a 99% target, 25% of budget remaining). This
+is a real breach produced by a real failure, not a mocked-up screenshot.
+
+## A Prometheus bug worth knowing about
+
+The budget recording rules were first written with `interval: 5m`, on the
+reasoning that a 30-day budget does not need recalculating every 30 seconds.
+Every rule reported `health: ok`, and the series still intermittently
+returned **no data**.
+
+The cause is that Prometheus resolves an instant query by looking back up to
+`--query.lookback-delta` (5 minutes by default) for the most recent sample.
+A rule evaluated every 5 minutes produces samples exactly 5 minutes apart —
+right on that boundary. Any evaluation delay pushes the newest sample just
+outside the window and the series vanishes, so dashboard panels flicker
+between a value and "No data" with nothing logging an error.
+
+The fix is to keep any recording rule's interval comfortably below the
+lookback delta; these now run at `interval: 1m`. The general lesson: **rule
+health being `ok` only means the expression evaluated, not that anything can
+read the result.**
+
+## What Phase 11 does with this
+
+Phase 11 turns the recorded burn rates into Prometheus alert rules using the
+multi-window approach described above, so alerts fire on budget consumption
+*speed* and user impact rather than on raw error counts or CPU thresholds.
 
 ## Interview Questions This Phase Should Prepare You For
 
@@ -224,3 +376,26 @@ rate.
    journeys. Putting one on every internal component produces a wall of
    targets nobody can act on, and encourages alerting on causes rather than
    symptoms.
+8. **"What is an error budget actually for?"** — Replacing an argument with
+   arithmetic. Reliability and velocity are in tension, and without an
+   agreed number that tension is settled by whoever argues hardest. The
+   budget makes "can we ship this?" a question with a factual answer.
+9. **"What is a burn rate of 14.4 and where does that number come from?"** —
+   It is normalised consumption speed: burn rate 1 exhausts the budget in
+   exactly one SLO window. 14.4 is chosen so that one hour at that rate
+   burns 2% of a 30-day budget, which is the standard fast-burn page
+   threshold.
+10. **"Why do burn-rate alerts use two windows?"** — A short window alone is
+    noisy; a long window alone is slow to fire and slow to clear. Requiring
+    a long window (has enough budget burned to matter?) and a short window
+    (is it still burning?) to agree gives fast detection, few false alarms,
+    and prompt resolution after recovery.
+11. **"Your budget says minutes of downtime. Is that right?"** — Only if
+    traffic is uniform. With a request-based SLI the budget is a count of
+    failed requests, which correctly makes an outage at peak cost more than
+    the same duration overnight.
+12. **"Your dashboard shows a 30-day budget but Prometheus has two days of
+    data. Is that number real?"** — No, and it should say so. The ratio is
+    valid over observed traffic, but the absolute allowance is not a true
+    month. Stating the limitation is part of the deliverable; presenting it
+    as a month would be fabrication.

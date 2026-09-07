@@ -1,0 +1,303 @@
+{
+  "uid": "pulseops-executive-reliability",
+  "title": "PulseOps / Executive Reliability Overview",
+  "tags": ["pulseops", "slo"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "description": "Are we meeting our promises, and how fast are we spending the allowance? Every number here derives from the SLI recording rules; the targets come from slo:*:target so there is one place to change them. NOTE: the 30-day figures evaluate over whatever history Prometheus actually has - until retention reaches 30 days these are 'budget over available data', not a true month.",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Availability SLO — status",
+      "description": "Is the availability SLI at or above its target over the SLO window? This is the whole promise reduced to one word.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 0, "w": 5, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "MISSING", "color": "red" }, "1": { "text": "MET", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sli:availability:ratio_rate30d >= bool scalar(slo:availability:target)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Availability (SLO window)",
+      "description": "Proportion of gateway requests that did not return 5xx. 4xx is excluded - a client's bad request is not our outage.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 5, "y": 0, "w": 5, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.995 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "textMode": "value" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sli:availability:ratio_rate30d",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Availability — error budget remaining",
+      "description": "How much of the allowed failure is left. Deliberately NOT clamped at zero: a negative value means the budget is overspent, and by how much. That is the number that should stop a risky deploy.",
+      "type": "gauge",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 10, "y": 0, "w": 7, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": -0.25,
+          "max": 1,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "dark-red", "value": null },
+              { "color": "red", "value": 0 },
+              { "color": "orange", "value": 0.25 },
+              { "color": "green", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "slo:availability:error_budget_remaining_ratio",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Availability budget — requests",
+      "description": "The budget in its true units. With a request-based SLI the allowance IS a number of failed requests; converting it to 'minutes of downtime' assumes uniform traffic, which it never is.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 17, "y": 0, "w": 7, "h": 5 },
+      "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] },
+      "options": { "colorMode": "none", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "slo:availability:bad_requests_observed",
+          "legendFormat": "failed",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "slo:availability:bad_requests_allowed",
+          "legendFormat": "allowed",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Latency SLO — status",
+      "description": "Is the proportion of requests under 250ms at or above target?",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 5, "w": 5, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "MISSING", "color": "red" }, "1": { "text": "MET", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sli:latency:ratio_rate30d >= bool scalar(slo:latency:target)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Latency SLI (under 250ms)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 5, "y": 5, "w": 5, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.99 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "textMode": "value" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sli:latency:ratio_rate30d",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Latency — error budget remaining",
+      "type": "gauge",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 10, "y": 5, "w": 7, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": -0.25,
+          "max": 1,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "dark-red", "value": null },
+              { "color": "red", "value": 0 },
+              { "color": "orange", "value": 0.25 },
+              { "color": "green", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "slo:latency:error_budget_remaining_ratio",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Traffic",
+      "description": "Context, not a target. A ratio computed over almost no requests is not evidence of anything, and a sudden drop in traffic is itself a symptom.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 17, "y": 5, "w": 7, "h": 5 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 2 }, "overrides": [] },
+      "options": { "colorMode": "none", "graphMode": "area", "textMode": "value" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "traffic:requests:rate5m",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Availability burn rate — multi-window",
+      "description": "Burn rate is the SPEED of budget consumption. 1 means the budget lasts exactly one 30-day window. The reference lines are the thresholds Phase 11 alerts on: 14.4 (2% of budget in 1h, page) and 6 (5% in 6h, page). A short window reacts fast but is noisy; a long one is stable but slow - which is why alerts require both to agree.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 6 },
+              { "color": "red", "value": 14.4 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:availability:burn_rate5m", "legendFormat": "5m" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:availability:burn_rate1h", "legendFormat": "1h" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:availability:burn_rate6h", "legendFormat": "6h" },
+        { "refId": "D", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:availability:burn_rate1d", "legendFormat": "1d" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Latency burn rate — multi-window",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 6 },
+              { "color": "red", "value": 14.4 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:latency:burn_rate5m", "legendFormat": "5m" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:latency:burn_rate1h", "legendFormat": "1h" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:latency:burn_rate6h", "legendFormat": "6h" },
+        { "refId": "D", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:latency:burn_rate1d", "legendFormat": "1d" }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Error budget remaining over time",
+      "description": "The budget draining. A steady downward slope is normal spend; a cliff is an incident. This is the panel that turns 'we had an outage' into 'that outage cost us 40% of the month's allowance'.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 19, "w": 24, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:availability:error_budget_remaining_ratio", "legendFormat": "availability" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "slo:latency:error_budget_remaining_ratio", "legendFormat": "latency" }
+      ]
+    }
+  ]
+}
