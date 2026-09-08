@@ -125,6 +125,9 @@ groups:
       - record: slo:availability:burn_rate1h
         expr: (1 - sli:availability:ratio_rate1h) / scalar(1 - slo:availability:target)
 
+      - record: slo:availability:burn_rate2h
+        expr: (1 - sli:availability:ratio_rate2h) / scalar(1 - slo:availability:target)
+
       - record: slo:availability:burn_rate6h
         expr: (1 - sli:availability:ratio_rate6h) / scalar(1 - slo:availability:target)
 
@@ -139,6 +142,9 @@ groups:
 
       - record: slo:latency:burn_rate1h
         expr: (1 - sli:latency:ratio_rate1h) / scalar(1 - slo:latency:target)
+
+      - record: slo:latency:burn_rate2h
+        expr: (1 - sli:latency:ratio_rate2h) / scalar(1 - slo:latency:target)
 
       - record: slo:latency:burn_rate6h
         expr: (1 - sli:latency:ratio_rate6h) / scalar(1 - slo:latency:target)

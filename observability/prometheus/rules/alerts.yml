@@ -1,0 +1,324 @@
+# PulseOps alert rules (Phase 11)
+#
+# The organising principle: PAGE ON SYMPTOMS, TICKET ON CAUSES.
+#
+# Only two things wake a human here - the SLO burn-rate alerts and a service
+# being down - because only those mean users are actually being hurt right
+# now. Everything else (a Redis error, a failed query, a growing queue) is a
+# warning: it explains WHY something is wrong and belongs next to the
+# incident, but on its own it may have no user impact at all. Redis can throw
+# errors while every request still succeeds from the database.
+#
+# Alerting on causes is how teams end up with fifty rules, most of which fire
+# during healthy operation, and an on-call engineer who has learned to ignore
+# the channel. That is alert fatigue, and it is a reliability problem in its
+# own right: the alert that mattered arrives in the same stream as the forty
+# that did not.
+#
+# Every alert here carries the current value and a runbook link, because an
+# alert that says only "something is wrong" costs the responder minutes they
+# do not have at 3am.
+
+groups:
+  # =====================================================================
+  # SLO burn-rate alerts - the only latency/error alerts that page.
+  #
+  # Each uses TWO windows and requires both to agree:
+  #   long window  - has enough budget burned for this to matter?
+  #   short window - is it STILL burning, right now?
+  #
+  # The long window alone would keep firing for hours after recovery. The
+  # short window alone would fire on every transient blip. Together they
+  # give fast detection, few false alarms, and prompt resolution.
+  #
+  # The thresholds are not arbitrary. Burn rate is normalised so 1 means
+  # the budget lasts exactly one 30-day window:
+  #   14.4x for 1h  = 2% of the month's budget spent in an hour
+  #    6x   for 6h  = 5% spent in six hours
+  #    3x   for 1d  = 10% spent in a day
+  # =====================================================================
+  - name: pulseops_slo_burn
+    rules:
+      - alert: AvailabilityErrorBudgetFastBurn
+        expr: |
+          slo:availability:burn_rate1h > 14.4
+          and
+          slo:availability:burn_rate5m > 14.4
+        for: 2m
+        labels:
+          severity: critical
+          notify: page
+          slo: availability
+        annotations:
+          summary: "Availability budget burning {{ $value | humanize }}x too fast"
+          description: >-
+            The availability error budget is being consumed at
+            {{ $value | humanize }}x the sustainable rate, confirmed over both
+            1h and 5m windows. At this speed the entire 30-day budget is gone
+            in roughly {{ with query "30 / max(slo:availability:burn_rate1h)" }}{{ . | first | value | humanize }}{{ end }} days.
+            Users are seeing 5xx responses from the gateway right now.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/slo-burn-rate.md"
+
+      - alert: AvailabilityErrorBudgetSlowBurn
+        expr: |
+          slo:availability:burn_rate6h > 6
+          and
+          slo:availability:burn_rate30m > 6
+        for: 5m
+        labels:
+          severity: critical
+          notify: page
+          slo: availability
+        annotations:
+          summary: "Availability budget burning {{ $value | humanize }}x too fast (sustained)"
+          description: >-
+            Sustained availability budget burn at {{ $value | humanize }}x over
+            6h, still active in the last 30m. Less violent than a fast burn but
+            it will exhaust the month's budget in days rather than weeks, and it
+            has already been going on long enough that it is not a blip.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/slo-burn-rate.md"
+
+      # Ticket, not a page. A persistent low-grade problem deserves someone's
+      # working day, not their sleep.
+      - alert: AvailabilityErrorBudgetDrain
+        expr: |
+          slo:availability:burn_rate1d > 3
+          and
+          slo:availability:burn_rate2h > 3
+        for: 15m
+        labels:
+          severity: warning
+          notify: ticket
+          slo: availability
+        annotations:
+          summary: "Availability budget draining steadily ({{ $value | humanize }}x)"
+          description: >-
+            Availability budget has been burning at {{ $value | humanize }}x over
+            a day and is still burning now. Nothing is on fire, but at this rate
+            roughly 10% of the monthly budget goes per day. Worth investigating
+            before it becomes a page.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/slo-burn-rate.md"
+
+      - alert: LatencyErrorBudgetFastBurn
+        expr: |
+          slo:latency:burn_rate1h > 14.4
+          and
+          slo:latency:burn_rate5m > 14.4
+        for: 2m
+        labels:
+          severity: critical
+          notify: page
+          slo: latency
+        annotations:
+          summary: "Latency budget burning {{ $value | humanize }}x too fast"
+          description: >-
+            Requests are exceeding the 250ms latency threshold fast enough to
+            consume the latency error budget at {{ $value | humanize }}x the
+            sustainable rate. Check the write path first - order creation
+            carries the known AMQP reconnect outlier documented in docs/slos.md.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/slo-burn-rate.md"
+
+      - alert: LatencyErrorBudgetSlowBurn
+        expr: |
+          slo:latency:burn_rate6h > 6
+          and
+          slo:latency:burn_rate30m > 6
+        for: 5m
+        labels:
+          severity: critical
+          notify: page
+          slo: latency
+        annotations:
+          summary: "Latency budget burning {{ $value | humanize }}x too fast (sustained)"
+          description: >-
+            Sustained latency budget burn at {{ $value | humanize }}x over 6h,
+            still active in the last 30m.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/slo-burn-rate.md"
+
+      - alert: LatencyErrorBudgetDrain
+        expr: |
+          slo:latency:burn_rate1d > 3
+          and
+          slo:latency:burn_rate2h > 3
+        for: 15m
+        labels:
+          severity: warning
+          notify: ticket
+          slo: latency
+        annotations:
+          summary: "Latency budget draining steadily ({{ $value | humanize }}x)"
+          description: >-
+            Latency budget burning at {{ $value | humanize }}x over a day and
+            still burning. Investigate during working hours.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/slo-burn-rate.md"
+
+  # =====================================================================
+  # Availability of the system itself.
+  #
+  # This pages because a service that is not running cannot serve anyone,
+  # and unlike the burn-rate alerts it fires even when there is no traffic
+  # to measure a ratio from - which is exactly the 3am case where a ratio
+  # based SLI goes silent because the denominator is zero.
+  # =====================================================================
+  - name: pulseops_service_health
+    rules:
+      - alert: ServiceDown
+        expr: up{job=~"gateway|user-service|order-service|worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          notify: page
+        annotations:
+          summary: "{{ $labels.job }} is down"
+          description: >-
+            Prometheus has been unable to scrape {{ $labels.job }} at
+            {{ $labels.instance }} for over 2 minutes. The process is either
+            stopped, crash-looping, or unreachable on the network. Note the
+            SLO burn alerts may stay silent if traffic has also stopped -
+            no requests means no ratio to measure.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/service-down.md"
+
+      # No traffic at all is ambiguous - it could be 3am, or it could be that
+      # nothing can reach the gateway. Deliberately a warning, not a page.
+      - alert: NoTrafficReceived
+        expr: absent(traffic:requests:rate5m) or traffic:requests:rate5m == 0
+        for: 15m
+        labels:
+          severity: warning
+          notify: ticket
+        annotations:
+          summary: "Gateway has received no requests for 15 minutes"
+          description: >-
+            No traffic is reaching the gateway. This may be entirely normal for
+            a low-traffic environment, which is why it does not page. It matters
+            because every ratio-based SLI goes blind without a denominator - if
+            this is unexpected, the SLO dashboards are currently meaningless
+            rather than green.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/README.md"
+
+  # =====================================================================
+  # Dependency degradation - WARNINGS ONLY, deliberately.
+  #
+  # None of these page. Each describes a cause, and a cause may or may not
+  # have reached the user: cache-aside means Redis can fail completely while
+  # every request still succeeds, just slower. If one of these is genuinely
+  # hurting users, a burn-rate alert above will page and these become the
+  # explanation sitting next to it.
+  # =====================================================================
+  - name: pulseops_dependencies
+    rules:
+      - alert: PostgresQueryFailures
+        expr: sum by (service) (rate(db_queries_failed_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          notify: ticket
+          dependency: postgres
+        annotations:
+          summary: '{{ $labels.service }} is failing Postgres queries ({{ $value | printf "%.3f" }}/s)'
+          description: >-
+            {{ $labels.service }} has been failing database queries at
+            {{ $value | printf "%.3f" }}/s for 5 minutes. Check connection pool
+            saturation, Postgres availability, and slow-query behaviour.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/dependency-degraded.md"
+
+      - alert: PostgresConnectionPoolSaturated
+        expr: max by (service) (db_pool_connections{state="waiting"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+          notify: ticket
+          dependency: postgres
+        annotations:
+          summary: "{{ $labels.service }} has requests queued for a DB connection"
+          description: >-
+            {{ $value | humanize }} request(s) in {{ $labels.service }} are
+            waiting for a free Postgres connection. The pool is saturated, which
+            turns into latency long before it turns into errors - this is an
+            early warning, which is why it is a ticket and not a page.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/dependency-degraded.md"
+
+      - alert: RedisErrors
+        expr: sum(rate(cache_errors_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          notify: ticket
+          dependency: redis
+        annotations:
+          summary: 'Redis cache operations are failing ({{ $value | printf "%.3f" }}/s)'
+          description: >-
+            The user-profile cache is erroring at {{ $value | printf "%.3f" }}/s.
+            Because the lookup is cache-aside, requests still succeed by falling
+            through to user-service - so this shows up as extra load and latency
+            rather than errors. Watch the cache hit ratio and Postgres load.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/dependency-degraded.md"
+
+      - alert: DownstreamCallFailures
+        expr: sum by (dependency) (rate(dependency_requests_total{status="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          notify: ticket
+        annotations:
+          summary: 'Calls to {{ $labels.dependency }} are failing ({{ $value | printf "%.3f" }}/s)'
+          description: >-
+            order-service is failing to reach {{ $labels.dependency }} at
+            {{ $value | printf "%.3f" }}/s. This only happens on a cache miss, so the
+            user-visible impact depends on the current cache hit ratio.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/dependency-degraded.md"
+
+      - alert: QueuePublishFailures
+        expr: sum(rate(queue_messages_published_total{status="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          notify: ticket
+          dependency: rabbitmq
+        annotations:
+          summary: 'Failing to publish orders to RabbitMQ ({{ $value | printf "%.3f" }}/s)'
+          description: >-
+            order-service cannot publish order.created messages. Orders are
+            being written to Postgres and then never processed, so they will sit
+            at status "pending" indefinitely - a silent data-consistency problem
+            rather than a visible outage.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/dependency-degraded.md"
+
+      - alert: WorkerProcessingFailures
+        expr: sum(rate(queue_messages_consumed_total{status="failed"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          notify: ticket
+        annotations:
+          summary: 'Worker is failing to process messages ({{ $value | printf "%.3f" }}/s)'
+          description: >-
+            The worker is nacking messages at {{ $value | printf "%.3f" }}/s. Those
+            orders never reach "completed". Because messages are nacked without
+            requeue, they are discarded rather than retried.
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/dependency-degraded.md"
+
+      # Broker-native queue depth is unavailable since RabbitMQ moved to
+      # CloudAMQP, so this compares publish rate against consume rate instead.
+      # It can only detect a growing backlog, not an existing one - stated
+      # plainly rather than pretending this is a depth metric.
+      - alert: QueueBacklogGrowing
+        expr: |
+          sum(rate(queue_messages_published_total{status="success"}[10m]))
+          -
+          sum(rate(queue_messages_consumed_total[10m]))
+          > 0.1
+        for: 15m
+        labels:
+          severity: warning
+          notify: ticket
+          dependency: rabbitmq
+        annotations:
+          summary: "Orders are being queued faster than the worker drains them"
+          description: >-
+            Publish rate exceeds consume rate by {{ $value | printf "%.3f" }}/s and has
+            for 15 minutes, so the queue is growing. Orders will take
+            progressively longer to reach "completed". This is a derived proxy -
+            true queue depth is not observable since the move to CloudAMQP (see
+            docs/slos.md).
+          runbook_url: "https://github.com/Nandu-ramineni/Pulsops/blob/main/docs/runbooks/dependency-degraded.md"

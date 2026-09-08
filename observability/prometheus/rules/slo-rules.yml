@@ -60,6 +60,13 @@ groups:
           /
           sum(rate(http_requests_total{service="gateway"}[1h]))
 
+      # 2h is the short window for the ticket-tier burn alert in Phase 11.
+      - record: sli:availability:ratio_rate2h
+        expr: |
+          sum(rate(http_requests_total{service="gateway",status_code!~"5.."}[2h]))
+          /
+          sum(rate(http_requests_total{service="gateway"}[2h]))
+
       - record: sli:availability:ratio_rate6h
         expr: |
           sum(rate(http_requests_total{service="gateway",status_code!~"5.."}[6h]))
@@ -105,6 +112,12 @@ groups:
           sum(rate(http_request_duration_seconds_bucket{service="gateway",le="0.25"}[1h]))
           /
           sum(rate(http_request_duration_seconds_count{service="gateway"}[1h]))
+
+      - record: sli:latency:ratio_rate2h
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{service="gateway",le="0.25"}[2h]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="gateway"}[2h]))
 
       - record: sli:latency:ratio_rate6h
         expr: |

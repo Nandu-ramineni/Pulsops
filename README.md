@@ -29,7 +29,7 @@ for the full design rationale.
 | 8 | Correlating Metrics/Logs/Traces | ✅ done |
 | 9 | SLI/SLO Design | ✅ done |
 | 10 | Error Budgets & Burn Rates | ✅ done |
-| 11 | Prometheus Alert Rules | ⬜ not started |
+| 11 | Prometheus Alert Rules | ✅ done |
 | 12 | Alertmanager | ⬜ not started |
 | 13 | Incident Response Framework | ⬜ not started |
 | 14 | Failure Simulation | ⬜ not started |
@@ -83,6 +83,21 @@ budget to **−3.28%**, overspent.
 See [docs/slos.md](docs/slos.md) for the full baseline data, the derivation
 of every number, the error budget policy (what actually happens at 0%), and
 the known threats to each target.
+
+## Alerting
+
+Fifteen alert rules exist; **five of them can wake a human**. The principle
+is *page on symptoms, ticket on causes* — Redis can fail completely while
+every request still succeeds through the cache-aside fallback, so a Redis
+error is a warning, not a page.
+
+Validated by stopping a service under live traffic and watching the
+escalation: `ServiceDown` firing at +3 min, the fast-burn budget alert at
++12 min (25.14x), and zero alerts on a healthy system beforehand.
+
+See [docs/alerting.md](docs/alerting.md) for the threshold derivations, the
+measured detection times, and what is deliberately *not* alerted on.
+Runbooks are in [docs/runbooks/](docs/runbooks/).
 
 ## Repository Structure
 
