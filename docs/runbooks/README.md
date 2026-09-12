@@ -48,9 +48,14 @@ notifications are inspectable at http://localhost:4004/alerts.
   warning family (Postgres, Redis, RabbitMQ, downstream calls)
 
 Per-failure-mode runbooks tied to the reproducible incidents
-(`incidents/incident-00N-*`) are written in Phase 13/16, once each failure
-has actually been simulated and measured. Writing them before running the
-incident would mean inventing the symptoms.
+(`incidents/incident-00N-*`) are written in Phase 16, once each failure has
+actually been simulated and measured in Phase 14. Writing them before
+running the incident would mean inventing the symptoms.
+
+For the overall process a firing alert triggers — severity levels
+(SEV-1..4), the full detection-to-postmortem lifecycle, roles, and the
+exact MTTD/MTTR definitions Phase 14 measures against — see
+[docs/incident-response.md](../incident-response.md).
 
 ## Where to look, in order
 

@@ -31,7 +31,7 @@ for the full design rationale.
 | 10 | Error Budgets & Burn Rates | ✅ done |
 | 11 | Prometheus Alert Rules | ✅ done |
 | 12 | Alertmanager | ✅ done |
-| 13 | Incident Response Framework | ⬜ not started |
+| 13 | Incident Response Framework | ✅ done |
 | 14 | Failure Simulation | ⬜ not started |
 | 15 | Load & Stress Testing | ⬜ not started |
 | 16 | Incident Docs & Postmortems | ⬜ not started |
@@ -108,6 +108,25 @@ against a real local webhook receiver (`services/alert-receiver`,
 inspectable at http://localhost:4004/alerts) instead of faked — verified
 end-to-end by stopping a service under load and reading back the actual
 deliveries, including a suppressed alert that provably never arrived.
+
+## Incident Response
+
+A firing alert is the start of a process, not the end of one. Severity
+(SEV-1 through SEV-4) is decided during triage from actual observed
+impact — deliberately kept distinct from *alert* severity (`critical`/
+`warning`), which is a routing decision made in advance. The same
+`ServiceDown` alert is SEV-1 for the gateway and SEV-3 for the worker,
+because the worker has no user-visible impact at all (see
+[docs/runbooks/service-down.md](docs/runbooks/service-down.md)).
+
+MTTD and MTTR are defined precisely against real Prometheus/Alertmanager
+timestamps — not estimated after the fact — so Phase 14's controlled
+failures produce numbers rigorous enough to put on a resume.
+
+See [docs/incident-response.md](docs/incident-response.md) for the full
+lifecycle, severity decision guide, roles, and MTTD/MTTR definitions, and
+[docs/postmortems/TEMPLATE.md](docs/postmortems/TEMPLATE.md) for the
+blameless postmortem template Phase 16 will fill in with real incidents.
 
 ## Repository Structure
 
