@@ -32,7 +32,7 @@ for the full design rationale.
 | 11 | Prometheus Alert Rules | ✅ done |
 | 12 | Alertmanager | ✅ done |
 | 13 | Incident Response Framework | ✅ done |
-| 14 | Failure Simulation | ⬜ not started |
+| 14 | Failure Simulation | ✅ done |
 | 15 | Load & Stress Testing | ⬜ not started |
 | 16 | Incident Docs & Postmortems | ⬜ not started |
 | 17 | Final Dashboards & Docs | ⬜ not started |
@@ -127,6 +127,24 @@ See [docs/incident-response.md](docs/incident-response.md) for the full
 lifecycle, severity decision guide, roles, and MTTD/MTTR definitions, and
 [docs/postmortems/TEMPLATE.md](docs/postmortems/TEMPLATE.md) for the
 blameless postmortem template Phase 16 will fill in with real incidents.
+
+## Failure Simulation
+
+All five incidents from the original plan were actually run against the
+live stack — not scripted-and-assumed, run — with real timestamps, real
+metrics, and two real bugs found and fixed mid-simulation:
+
+| Incident | MTTD | Finding |
+|---|---|---|
+| [001 — Database Slowdown](incidents/incident-001-database-slowdown) | 4m32s (fast-burn) | Gateway p95 rose ~45x (20ms → 910ms) under Postgres CPU throttle |
+| [002 — Redis Failure](incidents/incident-002-redis-failure) | 6m30s (post-fix) | **Redis going down hung requests indefinitely** instead of degrading gracefully — the documented cache-aside fallback had a real bug, fixed and re-verified live |
+| [003 — Bad Deployment](incidents/incident-003-bad-deployment) | 4m31s | A one-character typo caused **silent success behind a client-visible 500** — proven by finding the "failed" order sitting in Postgres. Real `git revert` rollback in 16 seconds |
+| [004 — Queue Backlog](incidents/incident-004-queue-backlog) | never (bug) → 16m10s (fixed) | **The alert designed to catch a dead worker couldn't fire while the worker was dead** — a PromQL absent-vs-zero bug, blind for 48 minutes during a real 34,591-message backlog |
+| [005 — High Latency](incidents/incident-005-high-latency) | 4m36s | Clean, exactly-as-designed fault injection via a feature flag — the control case the other four are compared against |
+
+Every number is a real measurement against Alertmanager's own delivery log,
+not an estimate. See each incident's README for the full timeline,
+PromQL/LogQL used, and lessons learned.
 
 ## Repository Structure
 
