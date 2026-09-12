@@ -90,7 +90,7 @@
     {
       "id": 6,
       "title": "Queue Backlog Trend (derived proxy)",
-      "description": "NOT true queue depth. RabbitMQ moved to CloudAMQP, so the broker-native rabbitmq_queue_messages metric is no longer scraped - see the KNOWN GAP note in observability/prometheus/prometheus.yml. This derives the trend from the app side instead: publish rate minus consume rate. Above zero means the queue is growing faster than the worker drains it; sustained time above zero is the backlog signal. It cannot show absolute depth, and it cannot see messages that were already queued before this window - restoring that needs CloudAMQP's own metrics endpoint.",
+      "description": "NOT true queue depth. RabbitMQ moved to CloudAMQP, so the broker-native rabbitmq_queue_messages metric is no longer scraped - see the KNOWN GAP note in observability/prometheus/prometheus.yml. This derives the trend from the app side instead: publish rate minus consume rate. Above zero means the queue is growing faster than the worker drains it; sustained time above zero is the backlog signal. It cannot show absolute depth, and it cannot see messages that were already queued before this window - restoring that needs CloudAMQP's own metrics endpoint. The consume side is wrapped in `or vector(0)`: that metric only exists on the worker's own /metrics, so once the worker is down long enough to leave Prometheus's scrape staleness window, it goes absent rather than zero - and 'present minus absent' renders as no data at all, hiding the exact backlog this panel exists to show (found running Incident 4).",
       "type": "timeseries",
       "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
@@ -98,7 +98,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(queue_messages_published_total{status=\"success\"}[5m])) - sum(rate(queue_messages_consumed_total[5m]))",
+          "expr": "sum(rate(queue_messages_published_total{status=\"success\"}[5m])) - (sum(rate(queue_messages_consumed_total[5m])) or vector(0))",
           "legendFormat": "net growth (publish - consume)"
         },
         {

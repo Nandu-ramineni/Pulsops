@@ -45,6 +45,24 @@ app.get('/metrics', async (_req, res) => {
   res.end(await register.metrics());
 });
 
+// Controlled fault injection for Incident 5 (high latency). A no-op unless
+// ARTIFICIAL_LATENCY_MS is set - see scripts/inject-latency.sh. Scoped to
+// /orders only, not /health, so a deliberately-slowed dependency doesn't
+// also make Docker think the container itself is unhealthy - the same
+// distinction real chaos tooling makes between "the request is slow" and
+// "the process is broken".
+const ARTIFICIAL_LATENCY_MS = Number(process.env.ARTIFICIAL_LATENCY_MS || 0);
+if (ARTIFICIAL_LATENCY_MS > 0) {
+  logger.warn({ artificialLatencyMs: ARTIFICIAL_LATENCY_MS }, 'ARTIFICIAL_LATENCY_MS active - fault injection enabled');
+}
+app.use('/orders', (_req, _res, next) => {
+  if (ARTIFICIAL_LATENCY_MS > 0) {
+    setTimeout(next, ARTIFICIAL_LATENCY_MS);
+  } else {
+    next();
+  }
+});
+
 app.use('/orders', ordersRouter);
 
 app.use((err, _req, res, _next) => {

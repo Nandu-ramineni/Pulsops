@@ -303,10 +303,19 @@ groups:
       # It can only detect a growing backlog, not an existing one - stated
       # plainly rather than pretending this is a depth metric.
       - alert: QueueBacklogGrowing
+        # `or vector(0)` on the consumed side is load-bearing, not decoration:
+        # queue_messages_consumed_total only exists on the worker's own
+        # /metrics. If the worker is down long enough that Prometheus's scrape
+        # staleness window (5m default) elapses, that series goes ABSENT, not
+        # zero - and `present - absent` in PromQL yields no result at all, so
+        # the whole alert silently stops evaluating. Found by running this
+        # exact scenario (worker stopped, publish traffic continuing) in
+        # Phase 14: the alert never fired without this fix, precisely when a
+        # fully-dead consumer is the case it most needs to catch.
         expr: |
           sum(rate(queue_messages_published_total{status="success"}[10m]))
           -
-          sum(rate(queue_messages_consumed_total[10m]))
+          (sum(rate(queue_messages_consumed_total[10m])) or vector(0))
           > 0.1
         for: 15m
         labels:

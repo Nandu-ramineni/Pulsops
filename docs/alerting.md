@@ -281,6 +281,41 @@ does not wait for the next evaluation cycle.
 - alert-receiver deliveries: **http://localhost:4004/alerts** — the ground
   truth for "did this actually get sent, and to which channel".
 
+---
+
+## A real detection gap found in Phase 14
+
+`QueueBacklogGrowing`'s alert rule (see the table above) went a full
+production run without ever firing — during a real, severe, continuously
+growing backlog it was specifically designed to catch. The cause:
+
+```promql
+sum(rate(queue_messages_published_total{status="success"}[10m]))
+-
+sum(rate(queue_messages_consumed_total[10m]))
+> 0.1
+```
+
+`queue_messages_consumed_total` only exists on the worker's own `/metrics`.
+Once the worker had been down long enough for Prometheus's scrape
+staleness window to elapse, that series went **absent**, not zero — and
+`present - absent` in PromQL yields no result at all, silently disabling
+the entire expression. Fixed with `or vector(0)` on the consumed side:
+
+```promql
+sum(rate(queue_messages_published_total{status="success"}[10m]))
+-
+(sum(rate(queue_messages_consumed_total[10m])) or vector(0))
+> 0.1
+```
+
+The general lesson: **any alert comparing metrics from two different
+targets needs an explicit answer for "what if one side goes completely
+absent," not just "what if it reports zero."** Those are different states
+in PromQL and this alert's failure mode lived entirely in that gap. Full
+incident writeup, including the ~48 minutes this alert was silently blind
+during a real backlog: [incident-004-queue-backlog](../incidents/incident-004-queue-backlog).
+
 ## Interview Questions This Phase Should Prepare You For
 
 1. **"What should page?"** — Symptoms with user impact. Causes become
@@ -328,3 +363,10 @@ does not wait for the next evaluation cycle.
     rather than logging a fabricated "sent" message. The distinction between
     "verified" and "would work with credentials" stays explicit instead of
     getting blurred.
+12. **"An alert never fires even though you're sure the condition is
+    true. How do you debug it?"** — Evaluate the expression directly against
+    each side separately before trusting the combined result. A subtraction
+    or ratio across two different targets can silently return no data at
+    all if one side is absent rather than zero — `rule health: ok` only
+    means the expression parsed and ran, not that it produces a result when
+    you need it to.

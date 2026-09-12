@@ -71,6 +71,9 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL in .env (see .env.example)}
       USER_SERVICE_URL: http://user-service:4001
       USER_CACHE_TTL_SECONDS: 60
+      # Fault injection for Incident 5 (docs/incidents/incident-005). 0 is a
+      # no-op; scripts/inject-latency.sh sets this from the host shell.
+      ARTIFICIAL_LATENCY_MS: ${ARTIFICIAL_LATENCY_MS:-0}
     ports:
       - "4002:4002"
     depends_on:
