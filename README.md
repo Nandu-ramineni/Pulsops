@@ -30,7 +30,7 @@ for the full design rationale.
 | 9 | SLI/SLO Design | ✅ done |
 | 10 | Error Budgets & Burn Rates | ✅ done |
 | 11 | Prometheus Alert Rules | ✅ done |
-| 12 | Alertmanager | ⬜ not started |
+| 12 | Alertmanager | ✅ done |
 | 13 | Incident Response Framework | ⬜ not started |
 | 14 | Failure Simulation | ⬜ not started |
 | 15 | Load & Stress Testing | ⬜ not started |
@@ -99,11 +99,21 @@ See [docs/alerting.md](docs/alerting.md) for the threshold derivations, the
 measured detection times, and what is deliberately *not* alerted on.
 Runbooks are in [docs/runbooks/](docs/runbooks/).
 
+Alerts route through **Alertmanager** (http://localhost:9093): `page`-tier
+alerts and `ticket`-tier alerts go to different receivers, a more severe
+burn-rate alert inhibits its redundant lower-severity duplicates, and
+silences suppress notification during planned maintenance. There are no
+real Slack/PagerDuty credentials for this project, so delivery is proven
+against a real local webhook receiver (`services/alert-receiver`,
+inspectable at http://localhost:4004/alerts) instead of faked — verified
+end-to-end by stopping a service under load and reading back the actual
+deliveries, including a suppressed alert that provably never arrived.
+
 ## Repository Structure
 
 ```text
 pulseops/
-├── services/           gateway, user-service, order-service, worker
+├── services/           gateway, user-service, order-service, worker, alert-receiver
 ├── observability/       prometheus, grafana, loki, alloy, tempo, alertmanager config
 ├── incidents/           reproducible failure scenarios + investigation writeups
 ├── load-tests/          k6 scripts
@@ -119,23 +129,24 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-This starts Postgres, Redis, RabbitMQ, and all four services. The gateway
-listens on **http://localhost:7000** (not 8080 — see note below).
+This starts Postgres, Redis, and all four services. RabbitMQ runs on
+CloudAMQP (cloud), configured via `RABBITMQ_URL` in `.env` — see
+`.env.example`. The gateway listens on **http://localhost:8080**.
 
 ```bash
 # create a user
-curl -X POST http://localhost:7000/api/users \
+curl -X POST http://localhost:8080/api/users \
   -H "Content-Type: application/json" \
   -d '{"name":"Nandu","email":"nandu@example.com"}'
 
 # create an order for that user
-curl -X POST http://localhost:7000/api/orders \
+curl -X POST http://localhost:8080/api/orders \
   -H "Content-Type: application/json" \
   -d '{"userId":1,"item":"widget","quantity":3}'
 
 # check it - status should flip from "pending" to "completed"
-# within a second or two once the worker consumes it off RabbitMQ
-curl http://localhost:7000/api/orders/1
+# within a second or two once the worker consumes it off the queue
+curl http://localhost:8080/api/orders/1
 ```
 
 Other useful endpoints while it's running:
@@ -147,7 +158,7 @@ Other useful endpoints while it's running:
   span you can jump back to the same request's logs, or out to that
   service's RED metrics. See [docs/observability.md](docs/observability.md)
   for how the three pillars are wired together.
-- Prometheus: http://localhost:9200 — raw metrics/query UI and scrape
+- Prometheus: http://localhost:9100 — raw metrics/query UI and scrape
   target health (`/targets`).
 - Loki: http://localhost:3100 — query logs from Grafana's **Explore** tab
   (pick the Loki datasource). Every service logs structured JSON carrying a
@@ -168,23 +179,24 @@ Other useful endpoints while it's running:
   UI. It ships container logs to Loki *and* receives OTLP traces from the
   services and forwards them to Tempo, so this is the first place to look
   if either logs or traces stop arriving.
-- RabbitMQ management UI: http://localhost:15672 (guest/guest) — watch the
-  `order.created` queue depth live.
-- Prometheus-format `/metrics` on every service: gateway `:7000`,
-  user-service `:4001`, order-service `:4002`, worker `:4003`, plus
-  RabbitMQ's own broker metrics on `:15692`.
+- Prometheus-format `/metrics` on every service: gateway `:8080`,
+  user-service `:4001`, order-service `:4002`, worker `:4003`. RabbitMQ's
+  own broker metrics are no longer scraped since the move to CloudAMQP —
+  see the "known gap" note in `observability/prometheus/prometheus.yml`
+  and `docs/slos.md`.
 - `docker compose logs -f worker` — watch orders get consumed.
 - `docker compose down -v` — stop everything and wipe all volumes
   (Postgres data, Prometheus history, Grafana state).
 
-**Why port 7000 (and Prometheus on 9200, not 9090):** on this dev machine,
-Hyper-V/WSL reserves large chunks of the 7975-9191 range as dynamic port
-exclusions, so Docker can't bind 8080, 8081, 9090, or 9091 to the host.
-Same root cause both times, same fix — remap the host side only. The
-containers still listen on their standard ports internally (gateway 8080,
-Prometheus 9090) — only the host-side mapping changed
-(`"7000:8080"` and `"9200:9090"` in `docker-compose.yml`). If your machine
-doesn't have this issue, feel free to remap them back to the defaults.
+**Why Prometheus is on 9100, not 9090:** Hyper-V/WSL on this dev machine
+periodically reserves chunks of the ephemeral port range as dynamic
+exclusions, and the exact ranges shift across reboots — this has already
+hit 8080, 9090, and 9200 at different points in this project. When a port
+bind fails with a Windows "access forbidden" error rather than "already in
+use", that's this issue, not a real conflict: check
+`netsh interface ipv4 show excludedportrange protocol=tcp` and remap the
+host side only, e.g. `"9100:9090"` in `docker-compose.yml`. The container
+always keeps listening on its standard port internally.
 
 **A real reliability bug found and fixed during this phase:** RabbitMQ's
 Docker healthcheck (`rabbitmq-diagnostics ping`) reports "healthy" before the

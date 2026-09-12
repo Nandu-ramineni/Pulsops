@@ -1,0 +1,146 @@
+# PulseOps Alertmanager config (Phase 12)
+#
+# This is where the routing decision made in alerts.yml's `notify` label
+# (page vs ticket) actually turns into "who gets told, and how urgently".
+# Prometheus decides WHAT is wrong; Alertmanager decides WHO hears about it,
+# grouped how, and how often it repeats.
+#
+# RECEIVERS: all three routes below point at the same local webhook
+# (alert-receiver, a small service in services/alert-receiver/). That is
+# deliberate, not a placeholder left unfinished - we do not have real
+# Slack/PagerDuty/email credentials for this project, and logging a fake
+# "sent to Slack" line would be exactly the kind of invented result this
+# project's rules forbid. alert-receiver is a REAL HTTP endpoint that
+# Alertmanager REALLY delivers to, so routing/grouping/inhibition/silencing
+# can all be verified against actual webhook payloads instead of trusted on
+# faith. See the bottom of this file for the real Slack/email config shape -
+# swapping in real credentials there is a config change, not an
+# architecture change.
+
+global:
+  resolve_timeout: 5m
+
+# ---------------------------------------------------------------------
+# Routing tree.
+#
+# group_by: ['alertname', 'slo'] means alerts fire as separate notifications
+# per alert type and per SLO, but multiple services/labels triggering the
+# SAME alert arrive as ONE grouped notification rather than one per label
+# combination - this is what turns "10 pages for one incident" into "1 page
+# naming 10 things".
+#
+# The page and ticket routes override group_wait/group_interval/
+# repeat_interval because they have different jobs: a page should reach
+# someone fast and remind them often until acknowledged; a ticket can wait
+# and only needs an occasional reminder.
+# ---------------------------------------------------------------------
+route:
+  receiver: default-webhook
+  group_by: ['alertname', 'slo']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    - matchers:
+        - notify = "page"
+      receiver: page-webhook
+      group_wait: 10s        # page fast - do not sit in the group window
+      group_interval: 1m
+      repeat_interval: 15m   # keep reminding until acknowledged or resolved
+
+    - matchers:
+        - notify = "ticket"
+      receiver: ticket-webhook
+      group_wait: 1m
+      group_interval: 15m
+      repeat_interval: 12h   # a ticket does not need to repeat hourly
+
+receivers:
+  - name: default-webhook
+    webhook_configs:
+      - url: http://alert-receiver:4004/webhook
+        send_resolved: true
+
+  - name: page-webhook
+    webhook_configs:
+      - url: http://alert-receiver:4004/webhook
+        send_resolved: true
+
+  - name: ticket-webhook
+    webhook_configs:
+      - url: http://alert-receiver:4004/webhook
+        send_resolved: true
+
+# ---------------------------------------------------------------------
+# Inhibition: suppress a less-urgent notification when a more-urgent one
+# for the SAME underlying problem is already firing.
+#
+# Without this, one real incident produces three separate notifications
+# (fast burn + slow burn + drain, all describing the same budget being
+# spent) - which is exactly the kind of redundant noise that trains an
+# on-call engineer to stop reading alerts carefully. `equal: ['slo']`
+# scopes each rule to the matching SLO (availability inhibits availability,
+# latency inhibits latency) using the `slo` label already set on all six
+# burn-rate alerts in alerts.yml.
+# ---------------------------------------------------------------------
+inhibit_rules:
+  - source_matchers:
+      - alertname = "AvailabilityErrorBudgetFastBurn"
+    target_matchers:
+      - alertname =~ "AvailabilityErrorBudgetSlowBurn|AvailabilityErrorBudgetDrain"
+    equal: ['slo']
+
+  - source_matchers:
+      - alertname = "AvailabilityErrorBudgetSlowBurn"
+    target_matchers:
+      - alertname = "AvailabilityErrorBudgetDrain"
+    equal: ['slo']
+
+  - source_matchers:
+      - alertname = "LatencyErrorBudgetFastBurn"
+    target_matchers:
+      - alertname =~ "LatencyErrorBudgetSlowBurn|LatencyErrorBudgetDrain"
+    equal: ['slo']
+
+  - source_matchers:
+      - alertname = "LatencyErrorBudgetSlowBurn"
+    target_matchers:
+      - alertname = "LatencyErrorBudgetDrain"
+    equal: ['slo']
+
+# ---------------------------------------------------------------------
+# What real Slack/email receivers look like (NOT active - no credentials
+# exist for this project). This is the actual config shape you would use,
+# documented rather than faked, so the gap between "demonstrated" and
+# "would work in production" is explicit rather than papered over.
+#
+# Slack (needs a Slack app incoming webhook URL):
+#
+#   receivers:
+#     - name: page-slack
+#       slack_configs:
+#         - api_url: "${SLACK_WEBHOOK_URL}"
+#           channel: "#pulseops-pages"
+#           title: '{{ .CommonAnnotations.summary }}'
+#           text: '{{ .CommonAnnotations.description }}'
+#           send_resolved: true
+#
+# Email (needs a real SMTP relay):
+#
+#   global:
+#     smtp_smarthost: "smtp.example.com:587"
+#     smtp_from: "pulseops-alerts@example.com"
+#     smtp_auth_username: "${SMTP_USERNAME}"
+#     smtp_auth_password: "${SMTP_PASSWORD}"
+#
+#   receivers:
+#     - name: ticket-email
+#       email_configs:
+#         - to: "oncall@example.com"
+#           send_resolved: true
+#
+# Alertmanager's config file does not support environment variable
+# substitution natively - a real deployment would template this file (e.g.
+# with envsubst or a secrets manager sidecar) rather than commit credentials.
+# ---------------------------------------------------------------------

@@ -122,8 +122,9 @@ automatically on startup — datasource and dashboards are files in
 observability stack is reproducible from a fresh `docker compose up`.
 
 **Access:**
-- Prometheus UI: http://localhost:9200 (mapped from the container's 9090 —
-  same Hyper-V/WSL port-exclusion issue as the gateway, see the README)
+- Prometheus UI: http://localhost:9100 (mapped from the container's 9090 —
+  a recurring Hyper-V/WSL dynamic port exclusion on this dev machine, see
+  the README's port note)
 - Grafana: http://localhost:3000 (admin/admin, or just browse anonymously —
   anonymous Viewer access is enabled for convenience in this local dev
   setup only)

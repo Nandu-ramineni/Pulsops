@@ -122,7 +122,31 @@ services:
       - ./observability/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     ports:
-      - "9200:9090"
+      - "9100:9090"
+    depends_on:
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "9093:9093"
+    depends_on:
+      - alert-receiver
+
+  # Stand-in for a real Slack/PagerDuty/email receiver - see the note at the
+  # top of observability/alertmanager/alertmanager.yml for why this exists
+  # instead of a faked delivery log.
+  alert-receiver:
+    build: ./services/alert-receiver
+    restart: unless-stopped
+    environment:
+      PORT: 4004
+    ports:
+      - "4004:4004"
 
   loki:
     image: grafana/loki:3.2.1
@@ -200,3 +224,4 @@ volumes:
   loki-data:
   alloy-data:
   tempo-data:
+  alertmanager-data:

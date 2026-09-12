@@ -32,6 +32,14 @@ incident, not to start one. A cause-based alert firing on its own often
 means nothing reached the user — Redis can fail completely while every
 request still succeeds through the cache-aside fallback.
 
+Routing (which receiver each alert reaches, based on its `notify` label),
+grouping, inhibition (suppressing a redundant lower-severity duplicate of
+an already-firing alert), and silencing (for planned maintenance) are all
+handled by Alertmanager — see [docs/alerting.md](../alerting.md#alertmanager-phase-12)
+for how, verified against real webhook deliveries rather than assumed from
+the config. Alertmanager's own UI is at http://localhost:9093; delivered
+notifications are inspectable at http://localhost:4004/alerts.
+
 ## Runbooks
 
 - **[slo-burn-rate.md](slo-burn-rate.md)** — all four burn-rate pages
