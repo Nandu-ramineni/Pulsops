@@ -31,7 +31,7 @@ router.post('/', async (req, res, next) => {
 
     await publishOrderCreated(order);
 
-    res.status(202).json(ordr);
+    res.status(202).json(order);
   } catch (err) {
     next(err);
   }
