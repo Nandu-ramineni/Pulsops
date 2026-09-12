@@ -11,6 +11,17 @@ and a cause has not necessarily reached a user. The clearest example: the
 user-profile lookup is cache-aside, so Redis can fail completely while every
 single request still succeeds — just slower, with more load on Postgres.
 
+This claim was actually **false** until Phase 14 fault injection caught it:
+the original code rethrew on a Redis `GET` failure instead of falling
+through, and node-redis's default reconnect strategy never gives up, so a
+real outage could **hang requests indefinitely** rather than degrade
+gracefully. Fixed in `userClient.js`/`redisClient.js` (bounded per-operation
+timeouts, bounded reconnect attempts, fall-through-on-any-error) and
+verified by actually breaking Redis again afterward — see
+[incident-002-redis-failure](../../incidents/incident-002-redis-failure) for
+the full before/after. The claim above is trustworthy now because it was
+tested, not because it was designed that way from the start.
+
 If users are actually being hurt, a burn-rate alert will page and one of
 these will be sitting next to it as the explanation. If one of these fires
 alone, you have advance warning, not an incident.
