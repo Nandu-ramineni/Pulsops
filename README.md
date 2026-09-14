@@ -33,7 +33,7 @@ for the full design rationale.
 | 12 | Alertmanager | ✅ done |
 | 13 | Incident Response Framework | ✅ done |
 | 14 | Failure Simulation | ✅ done |
-| 15 | Load & Stress Testing | ⬜ not started |
+| 15 | Load & Stress Testing | ✅ done |
 | 16 | Incident Docs & Postmortems | ⬜ not started |
 | 17 | Final Dashboards & Docs | ⬜ not started |
 
@@ -145,6 +145,28 @@ metrics, and two real bugs found and fixed mid-simulation:
 Every number is a real measurement against Alertmanager's own delivery log,
 not an estimate. See each incident's README for the full timeline,
 PromQL/LogQL used, and lessons learned.
+
+## Load & Stress Testing
+
+Three k6 scripts, run against the live stack via Docker (`grafana/k6`)
+joined directly to the compose network — real traffic, real Prometheus
+queries, nothing estimated:
+
+| Test | Result | Finding |
+|---|---|---|
+| [Normal load](load-tests/normal-load.js) (15 req/s, 3m) | p95 10.82ms, 0.00% errors — both SLO thresholds passed | ~23x latency headroom at the traffic SLOs were calibrated against |
+| [Stress](load-tests/stress-test.js) (15→800 req/s ramp) | p95 5.31s at peak, **0.00% errors even at 490x normal latency** | Breaks entirely via Postgres pool queueing (`pg.Pool` defaults to `max: 10`, 388 requests queued), never via errors — a documented capacity ceiling, not fixed |
+| [Failure](load-tests/failure-test.js) (15 req/s + Redis stopped for 2m) | Run 1: p95 446.63ms, 4 failures. **Fixed and re-verified** → Run 2: p95 45.77ms (9.8x better), 2 failures (now by design) | Unbounded `fetch()` to user-service inherited undici's 10s default timeout, invisible until Redis down made every request a cache miss at once — bounded to 2s with real cancellation (`AbortSignal.timeout`), same category as Phases 7/11/12/14's fixes |
+
+The failure test's re-verification run also surfaced a smaller, root-caused
+finding: `connectRedis()`'s own timeout wrapper doesn't cancel the
+underlying connection attempt, so abandoned reconnects during a sustained
+outage cause brief event-loop-level latency spikes (0.6% of one unrelated
+route, 4-10s each) — left as a documented finding, not fixed, for the same
+capacity-planning reason as the pool ceiling above.
+
+Full investigation, root-cause queries, and before/after evidence for both
+fixed and unfixed findings: [docs/load-testing.md](docs/load-testing.md).
 
 ## Repository Structure
 
