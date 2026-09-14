@@ -12,6 +12,16 @@ import {
 const TTL = Number(process.env.USER_CACHE_TTL_SECONDS || 60);
 const CACHE_NAME = 'user_profile';
 const REDIS_OP_TIMEOUT_MS = 750;
+// Found in Phase 15's failure-test.js: fetch() has no timeout of its own
+// and inherits undici's default 10s connect timeout. That is invisible
+// under normal traffic (~1% of requests are a cache miss), but once Redis
+// is down EVERY request becomes a miss simultaneously, and gateway p99 for
+// order creation measured exactly 10,000ms during that window - the
+// default, not a coincidence. 4 real request failures out of 5,369 in that
+// run trace directly to this. Bounded the same way the Redis calls already
+// are, so a slow user-service degrades the same way a slow Redis does,
+// rather than inheriting an unrelated library's default.
+const DEPENDENCY_TIMEOUT_MS = 2000;
 
 // Found during Incident 2 (Redis failure) fault injection: node-redis's
 // default reconnectStrategy retries forever and never rejects, so
@@ -70,8 +80,13 @@ export async function getUser(userId) {
     // Forwarding the correlation ID is what lets one Loki query show this
     // request's log lines from order-service AND user-service together.
     const requestId = getRequestId();
+    // AbortSignal.timeout() actually cancels the in-flight request rather
+    // than just abandoning the wait (unlike the Promise.race pattern used
+    // for Redis above) - the more correct tool when the underlying call
+    // supports real cancellation.
     response = await fetch(`${process.env.USER_SERVICE_URL}/users/${userId}`, {
       headers: requestId ? { [REQUEST_ID_HEADER]: requestId } : {},
+      signal: AbortSignal.timeout(DEPENDENCY_TIMEOUT_MS),
     });
   } catch (err) {
     depTimer();
