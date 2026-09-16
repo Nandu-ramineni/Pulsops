@@ -2,6 +2,8 @@
 
 **Date:** 2026-09-12 · **Severity:** SEV-3 (see [Classification](#classification)) · **Status:** Mitigated (worker resumed processing); full drain in progress, not yet complete at time of writing
 
+**Postmortem:** [docs/postmortems/2026-09-12-queue-backlog.md](../../docs/postmortems/2026-09-12-queue-backlog.md)
+
 ## Scenario
 
 The worker stops consuming from `order.created` while `order-service` keeps

@@ -2,6 +2,8 @@
 
 **Date:** 2026-09-12 · **Severity:** SEV-1 · **Status:** Resolved via rollback
 
+**Postmortem:** [docs/postmortems/2026-09-12-bad-deployment.md](../../docs/postmortems/2026-09-12-bad-deployment.md)
+
 ## Scenario
 
 A deploy introduces a real regression into `order-service`, and the

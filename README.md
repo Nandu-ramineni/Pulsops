@@ -34,7 +34,7 @@ for the full design rationale.
 | 13 | Incident Response Framework | ✅ done |
 | 14 | Failure Simulation | ✅ done |
 | 15 | Load & Stress Testing | ✅ done |
-| 16 | Incident Docs & Postmortems | ⬜ not started |
+| 16 | Incident Docs & Postmortems | ✅ done |
 | 17 | Final Dashboards & Docs | ⬜ not started |
 
 ## Architecture (summary)
@@ -167,6 +167,29 @@ capacity-planning reason as the pool ceiling above.
 
 Full investigation, root-cause queries, and before/after evidence for both
 fixed and unfixed findings: [docs/load-testing.md](docs/load-testing.md).
+
+## Incident Docs & Postmortems
+
+All five Phase 14 incidents got a full blameless postmortem in Phase 16,
+built from the same real Alertmanager/Prometheus/Loki/Tempo data each
+incident's own README already captured — no number re-derived from memory:
+
+| Postmortem | SEV | MTTD | Headline finding |
+|---|---|---|---|
+| [Database Slowdown](docs/postmortems/2026-09-12-database-slowdown.md) | SEV-2 | 4m31.9s | Gateway p95 rose ~45x under Postgres CPU throttle; zero errors, zero pool saturation — latency was the only signal |
+| [Redis Failure](docs/postmortems/2026-09-12-redis-failure.md) | SEV-4 (was SEV-1 pre-fix) | 6m30.2s (post-fix) | The cache-aside fallback's GET path rethrew instead of degrading, and an unbounded reconnect strategy meant a request could hang forever — found and fixed mid-incident |
+| [Bad Deployment](docs/postmortems/2026-09-12-bad-deployment.md) | SEV-1 | 4m30.8s | A one-character typo caused silent server-side success behind a client-visible 500 — proven by finding the "failed" order sitting in Postgres |
+| [Queue Backlog](docs/postmortems/2026-09-12-queue-backlog.md) | SEV-3 | 2m31.2s (ServiceDown); never (QueueBacklogGrowing, as shipped) | The alert built to catch a dead consumer was structurally incapable of firing while the consumer was dead — an absent-vs-zero PromQL bug |
+| [High Latency](docs/postmortems/2026-09-12-high-latency.md) | SEV-2 | 4m35.8s | The control case: an application-layer fault injection behaving exactly as designed, in contrast to the other four |
+
+Each postmortem follows [docs/postmortems/TEMPLATE.md](docs/postmortems/TEMPLATE.md):
+timeline, detection, root cause, contributing factors, MTTD/MTTR with the
+exact definitions from [docs/incident-response.md](docs/incident-response.md#mttd-and-mttr-exact-definitions),
+what went well/poorly, and action items — including, where an alert's own
+notification timing was misleading (a ticket alert's `group_interval`
+batching, a slow-burn alert firing after a fast-burn alert already
+resolved), calling that out explicitly rather than reporting the
+convenient number.
 
 ## Repository Structure
 

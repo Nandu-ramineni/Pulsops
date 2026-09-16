@@ -2,6 +2,8 @@
 
 **Date:** 2026-09-12 · **Severity:** SEV-4 (see [Classification](#classification)) · **Status:** Resolved, with a real bug found and fixed mid-incident
 
+**Postmortem:** [docs/postmortems/2026-09-12-redis-failure.md](../../docs/postmortems/2026-09-12-redis-failure.md)
+
 ## Scenario
 
 Redis backs order-service's cache-aside lookup of user profiles. The

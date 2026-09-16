@@ -2,6 +2,8 @@
 
 **Date:** 2026-09-12 · **Severity:** SEV-2 · **Status:** Resolved
 
+**Postmortem:** [docs/postmortems/2026-09-12-database-slowdown.md](../../docs/postmortems/2026-09-12-database-slowdown.md)
+
 ## Scenario
 
 Postgres backs both `user-service` and `order-service`. A real database

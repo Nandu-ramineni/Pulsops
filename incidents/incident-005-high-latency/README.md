@@ -2,6 +2,8 @@
 
 **Date:** 2026-09-12 · **Severity:** SEV-2 · **Status:** Resolved
 
+**Postmortem:** [docs/postmortems/2026-09-12-high-latency.md](../../docs/postmortems/2026-09-12-high-latency.md)
+
 ## Scenario
 
 Not every latency incident is a database problem (that's Incident 001) —
