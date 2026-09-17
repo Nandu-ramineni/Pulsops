@@ -35,7 +35,7 @@ for the full design rationale.
 | 14 | Failure Simulation | ✅ done |
 | 15 | Load & Stress Testing | ✅ done |
 | 16 | Incident Docs & Postmortems | ✅ done |
-| 17 | Final Dashboards & Docs | ⬜ not started |
+| 17 | Final Dashboards & Docs | ✅ done |
 
 ## Architecture (summary)
 
@@ -191,6 +191,30 @@ batching, a slow-burn alert firing after a fast-burn alert already
 resolved), calling that out explicitly rather than reporting the
 convenient number.
 
+## Dashboards
+
+Four Grafana dashboards, all provisioned as versioned JSON files rather
+than clicked together in the UI, so the whole observability layer is
+reproducible from a fresh `docker compose up`:
+
+| Dashboard | Built | Purpose |
+|---|---|---|
+| Service Overview | Phase 5 | RED metrics per service — the first stop for "is anything wrong" |
+| Dependencies | Phase 5 | Postgres/Redis/RabbitMQ/downstream-call health |
+| Incident Investigation | Phase 8 | Up/down → error/latency → dependency → logs → trace, in that order |
+| Executive Reliability Overview | Phase 10 | SLO compliance and error-budget burn |
+
+Every panel on all four was actually opened in a browser against the live
+stack this phase, not assumed correct from the JSON — which is how a real
+bug was found on the fourth dashboard: two panels rendered a red
+**"MISSING"** block that looked exactly like Grafana's own "No data"
+state but wasn't — the query was correct (`0`, meaning "SLO currently not
+met") and the *label* was the actual defect. Fixed by relabeling to
+**"NOT MET"**. Full writeup, including the two other explanations ruled
+out first (a cold-start timing artifact, and suspected missing historical
+data — both real hypotheses checked directly against Prometheus before
+finding the actual cause): [docs/dashboards.md](docs/dashboards.md).
+
 ## Repository Structure
 
 ```text
@@ -233,13 +257,15 @@ curl http://localhost:8080/api/orders/1
 
 Other useful endpoints while it's running:
 - **Grafana: http://localhost:3000** (admin/admin, or browse anonymously) —
-  three dashboards auto-provisioned: **Service Overview**, **Dependencies**
-  and **Incident Investigation**. Open Incident Investigation, expand any
-  line in the *Errors & Warnings* panel, and click its **TraceID → View
-  trace** to jump straight into that request's distributed trace. From a
-  span you can jump back to the same request's logs, or out to that
-  service's RED metrics. See [docs/observability.md](docs/observability.md)
-  for how the three pillars are wired together.
+  four dashboards auto-provisioned: **Service Overview**, **Dependencies**,
+  **Incident Investigation**, and **Executive Reliability Overview**. Open
+  Incident Investigation, expand any line in the *Errors & Warnings* panel,
+  and click its **TraceID → View trace** to jump straight into that
+  request's distributed trace. From a span you can jump back to the same
+  request's logs, or out to that service's RED metrics. See
+  [docs/observability.md](docs/observability.md) for how the three pillars
+  are wired together, and [docs/dashboards.md](docs/dashboards.md) for what
+  every panel on all four dashboards actually shows.
 - Prometheus: http://localhost:9100 — raw metrics/query UI and scrape
   target health (`/targets`).
 - Loki: http://localhost:3100 — query logs from Grafana's **Explore** tab
@@ -288,3 +314,41 @@ connection attempt on a fresh `docker compose up` hit `ECONNREFUSED`. Fixed
 with bounded exponential backoff on startup (`services/worker/src/index.js`)
 instead of crashing on the first failure — see the worker logs on a fresh
 `docker compose up -d --build` for it retrying in real time.
+
+## Project Retrospective — Real Bugs Found
+
+Every phase in this project enforced one rule: never invent, fake, or
+estimate a metric or a result — everything reported had to be measured
+against the live running stack. One consequence of actually breaking
+things instead of describing them is that the project accumulated a real
+list of defects, found the way defects get found anywhere — by looking,
+not by assuming the design was correct:
+
+| # | Phase | Bug | Fixed? |
+|---|---|---|---|
+| 1 | 3 — Docker Compose | RabbitMQ's healthcheck reports "healthy" before its AMQP listener actually accepts connections, racing the worker's first connection on a fresh `docker compose up` | ✅ bounded backoff on startup |
+| 2 | 5 — Prometheus & Grafana | Error Rate panel's y-axis auto-scaled to 10000% on a flat zero-variance series | ✅ pinned axis min/max |
+| 3 | 7 — OpenTelemetry & Tempo | RabbitMQ's client library connects lazily on first publish, so the very first `POST /orders` after a cold start pays an extra, invisible connection-setup cost | ✅ warm the connection at startup |
+| 4 | 8 — Correlating pillars | A Loki derived field's `${__value.raw}` was silently interpolated to empty by Grafana's *provisioning* layer, so "View trace" links rendered and navigated but always returned no data | ✅ escaped to `$${__value.raw}` |
+| 5 | 8 — Correlating pillars | Every log line carried `trace_id`/`span_id` twice — a manual pino mixin duplicating what OpenTelemetry's auto-instrumentation already injected | ✅ manual mixin removed |
+| 6 | 14 — Failure Simulation | `order-service`'s Redis GET-path fallback rethrew instead of degrading, and node-redis's default reconnect strategy retried forever — together, a Redis outage could hang a request indefinitely with no upper bound | ✅ bounded reconnect + bounded per-op timeout + corrected fallback |
+| 7 | 14 — Failure Simulation | A one-character typo (`ordr`) in a deploy caused every order-creation request to see a client-side `500` while the order silently completed server-side — a data-integrity risk on top of the outage | ✅ reverted; idempotency key flagged as a follow-up (see [postmortem](docs/postmortems/2026-09-12-bad-deployment.md)) |
+| 8 | 14 — Failure Simulation | `QueueBacklogGrowing`'s PromQL subtracted an absent vector instead of treating it as zero, so the alert was structurally incapable of firing for a fully-dead consumer — the exact scenario it exists to catch | ✅ `or vector(0)` |
+| 9 | 15 — Load & Stress Testing | `order-service`'s call to `user-service` had no application-level timeout, inheriting undici's default 10s connect timeout — invisible at normal traffic, but a real 0.07% error rate once a Redis outage made every request a cache miss at once | ✅ `AbortSignal.timeout(2000)`, re-verified: p95 9.8x better, failures 4→2 |
+| 10 | 15/16 — Load Testing / Postmortems | `connectRedis()`'s own `Promise.race` timeout wrapper doesn't cancel the underlying `client.connect()` call, so abandoned connection attempts during a sustained Redis outage cause brief event-loop-level latency spikes (4-10s) on unrelated Postgres-only routes | documented, not fixed — rare (0.6% of one route), bounded to an already-alerting failure condition |
+| 11 | 17 — Final Dashboards | The Executive Reliability dashboard's SLO-status panels rendered a red **"MISSING"** for a valid, correct query result (`0`, meaning "SLO not met") — indistinguishable at a glance from Grafana's genuine "No data" state | ✅ relabeled to "NOT MET" |
+
+Two of these (#6, #7) were found by controlled fault injection reproducing
+a claim the architecture had already made and assuming it would hold.
+Three (#4, #5, #11) were found by the same discipline applied to the
+dashboards themselves: a query returning the right number is necessary but
+not sufficient — someone still has to actually look at what renders.
+\#8 and \#10 are two versions of the same underlying lesson from different
+phases: a metric or a cancellation that's absent isn't the same as zero,
+and code that stops *waiting* for an operation isn't the same as code that
+*cancels* it. Ten of eleven got fixed and re-verified against the live
+stack in the same phase they were found; the one that didn't (#10) has a
+documented, specific reason why not, consistent with every other
+deliberately-unfixed finding in this project
+(see [docs/load-testing.md](docs/load-testing.md)'s `pg.Pool` sizing
+finding for the other example of that same judgment call).

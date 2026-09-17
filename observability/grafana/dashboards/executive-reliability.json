@@ -12,14 +12,14 @@
     {
       "id": 1,
       "title": "Availability SLO — status",
-      "description": "Is the availability SLI at or above its target over the SLO window? This is the whole promise reduced to one word.",
+      "description": "Is the availability SLI at or above its target over the SLO window? This is the whole promise reduced to one word. NOT MET means the query evaluated and the SLO is currently missed - distinct from Grafana's own grey \"No data\" state, which means the query itself returned nothing.",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "x": 0, "y": 0, "w": 5, "h": 5 },
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "MISSING", "color": "red" }, "1": { "text": "MET", "color": "green" } } }
+            { "type": "value", "options": { "0": { "text": "NOT MET", "color": "red" }, "1": { "text": "MET", "color": "green" } } }
           ]
         },
         "overrides": []
@@ -122,14 +122,14 @@
     {
       "id": 5,
       "title": "Latency SLO — status",
-      "description": "Is the proportion of requests under 250ms at or above target?",
+      "description": "Is the proportion of requests under 250ms at or above target? NOT MET means the query evaluated and the SLO is currently missed - distinct from Grafana's own grey \"No data\" state, which means the query itself returned nothing.",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "x": 0, "y": 5, "w": 5, "h": 5 },
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "MISSING", "color": "red" }, "1": { "text": "MET", "color": "green" } } }
+            { "type": "value", "options": { "0": { "text": "NOT MET", "color": "red" }, "1": { "text": "MET", "color": "green" } } }
           ]
         },
         "overrides": []
